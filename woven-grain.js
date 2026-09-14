@@ -139,14 +139,18 @@ function render() {
     ctx.restore();
   }
 
+  if (currentDirection === 'diagonal') {
+    renderDiagonalWeave({ mesh, depthAmt, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
+    return;
+  }
+
   for (let gy = 0; gy < h; gy += mesh) {
     for (let gx = 0; gx < w; gx += mesh) {
       const col = Math.floor(gx / mesh);
       const row = Math.floor(gy / mesh);
       let baseUseA;
       if (currentDirection === 'stripe') baseUseA = col % 2 === 0;
-      else if (currentDirection === 'basket') baseUseA = (row + col) % 2 === 0;
-      else baseUseA = Math.floor((gx + gy) / mesh) % 2 === 0;
+      else baseUseA = (row + col) % 2 === 0;
 
       let useA = baseUseA;
       if (density > 50 && !baseUseA) {
@@ -192,6 +196,93 @@ function render() {
         ctx.fillStyle = useA ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
         ctx.fillRect(fx, fy, fw, fh);
       }
+    }
+  }
+}
+
+// DIAGONAL WEAVE: unlike stripe/basket (axis-aligned square cells with a diagonal
+// boundary), this rotates the mesh grid itself by 45° so the bands genuinely cross
+// like real diagonal basketry — each "cell" is a diamond in screen space, clipped
+// and filled with the correctly-oriented (unrotated) photo content underneath.
+function renderDiagonalWeave(p) {
+  const { mesh, depthAmt, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
+  const w = outputCanvas.width, h = outputCanvas.height;
+  const cx = w / 2, cy = h / 2;
+  const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2; // 45°
+
+  const diag = Math.sqrt(w * w + h * h);
+  const range = Math.ceil(diag / 2 / mesh) + 2;
+
+  // precompute cover-fit mapping (source <- canvas) once per photo, reused for every diamond's bounding box
+  function coverMap(img) {
+    const ir = img.naturalWidth / img.naturalHeight;
+    const cr = w / h;
+    let scale, offX, offY;
+    if (ir > cr) { scale = img.naturalHeight / h; offX = (img.naturalWidth - w * scale) / 2; offY = 0; }
+    else { scale = img.naturalWidth / w; offX = 0; offY = (img.naturalHeight - h * scale) / 2; }
+    return { scale, offX, offY };
+  }
+  const mapA = coverMap(imgA), mapB = coverMap(imgB);
+
+  for (let row = -range; row <= range; row++) {
+    for (let col = -range; col <= range; col++) {
+      const u0 = row * mesh, v0 = col * mesh;
+      let baseUseA = (row + col) % 2 === 0;
+      let useA = baseUseA;
+      if (density > 50 && !baseUseA) {
+        if (seededRandom(row, col, 5) < (density - 50) / 50) useA = true;
+      } else if (density < 50 && baseUseA) {
+        if (seededRandom(row, col, 5) < (50 - density) / 50) useA = false;
+      }
+
+      // diamond corners: rotated-grid square -> screen space, with IMPERFECTION
+      // jittering each corner individually (uneven hand-woven edges) and TENSION
+      // scaling the whole diamond from its centroid (tight = overlapping/sealed, loose = gaps)
+      const cornersUV = [[u0, v0], [u0 + mesh, v0], [u0 + mesh, v0 + mesh], [u0, v0 + mesh]];
+      let cornersXY = cornersUV.map(([u, v], i) => {
+        const jx = (seededRandom(row, col, 10 + i) - 0.5) * 2 * imperfAmt;
+        const jy = (seededRandom(row, col, 20 + i) - 0.5) * 2 * imperfAmt;
+        return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
+      });
+      const centroid = cornersXY.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
+      const tensionScale = 1 + tensionFactor * 0.22;
+      cornersXY = cornersXY.map(([x, y]) => [
+        centroid[0] + (x - centroid[0]) * tensionScale,
+        centroid[1] + (y - centroid[1]) * tensionScale
+      ]);
+
+      const xs = cornersXY.map(c => c[0]), ys = cornersXY.map(c => c[1]);
+      const bx = Math.max(0, Math.min(w, Math.min(...xs)));
+      const by = Math.max(0, Math.min(h, Math.min(...ys)));
+      const bxMax = Math.max(0, Math.min(w, Math.max(...xs)));
+      const byMax = Math.max(0, Math.min(h, Math.max(...ys)));
+      const bw = bxMax - bx, bh = byMax - by;
+      if (bw <= 0 || bh <= 0) continue; // diamond entirely off-canvas, skip
+
+      const map = useA ? mapA : mapB;
+      const centerWarpX = warpAmt * Math.sin(centroid[1] * 0.05 + col);
+      const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
+      const sx = map.offX + (bx + centerWarpX) * map.scale;
+      const sy = map.offY + (by + centerWarpY) * map.scale;
+      const sw = bw * map.scale, sh = bh * map.scale;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cornersXY[0][0], cornersXY[0][1]);
+      for (let i = 1; i < cornersXY.length; i++) ctx.lineTo(cornersXY[i][0], cornersXY[i][1]);
+      ctx.closePath();
+      ctx.clip();
+      ctx.filter = useA ? filterA : filterB;
+      ctx.drawImage(useA ? imgA : imgB, sx, sy, sw, sh, bx, by, bw, bh);
+      ctx.filter = 'none';
+
+      if (depthAmt > 0) {
+        const baseAlpha = (useA ? 0.10 : 0.07) * depthAmt * tensionDepthMul;
+        const alpha = Math.max(0, Math.min(0.45, baseAlpha));
+        ctx.fillStyle = useA ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
+        ctx.fill();
+      }
+      ctx.restore();
     }
   }
 }
