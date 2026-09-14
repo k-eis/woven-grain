@@ -12,6 +12,23 @@ const outputCanvas = document.getElementById('outputCanvas');
 const ctx = outputCanvas.getContext('2d');
 const canvasHint = document.getElementById('canvasHint');
 
+// THEME SWITCH: 3 palettes (dark / beige-b / beige-c) via [data-theme] on <html>,
+// remembered in localStorage across visits
+const themeDots = document.querySelectorAll('.theme-dot');
+const savedTheme = localStorage.getItem('woven-grain-theme');
+if (savedTheme) {
+  document.documentElement.dataset.theme = savedTheme;
+  themeDots.forEach(d => d.classList.toggle('active', d.dataset.t === savedTheme));
+}
+themeDots.forEach(dot => {
+  dot.addEventListener('click', () => {
+    const t = dot.dataset.t;
+    document.documentElement.dataset.theme = t;
+    localStorage.setItem('woven-grain-theme', t);
+    themeDots.forEach(d => d.classList.toggle('active', d === dot));
+  });
+});
+
 const imgA = new Image();
 const imgB = new Image();
 const imgC = new Image();
