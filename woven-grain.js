@@ -191,13 +191,33 @@ function render() {
       ctx.filter = 'none';
 
       if (depthAmt > 0) {
-        const baseAlpha = (useA ? 0.10 : 0.07) * depthAmt * tensionDepthMul;
-        const alpha = Math.max(0, Math.min(0.45, baseAlpha));
-        ctx.fillStyle = useA ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
-        ctx.fillRect(fx, fy, fw, fh);
+        const ccx = fx + fw / 2, ccy = fy + fh / 2;
+        const radius = Math.hypot(fw, fh) / 2;
+        applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, tensionDepthMul, () => ctx.fillRect(fx, fy, fw, fh));
       }
     }
   }
+}
+
+// Simulates the small pooled shadow / raised-edge highlight where one strand
+// crosses over another in a real basket weave — darkest/brightest right at the
+// cell's own boundary (the seam with its neighbor), fading to nothing at the
+// center, rather than a single flat tint across the whole cell.
+function applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, tensionDepthMul, fillFn) {
+  const peak = Math.max(0, Math.min(0.5, (useA ? 0.16 : 0.22) * depthAmt * tensionDepthMul));
+  if (peak <= 0.002) return;
+  const grad = ctx.createRadialGradient(ccx, ccy, 0, ccx, ccy, radius);
+  if (useA) {
+    // raised strand: subtle warm highlight catching the light right at its edge
+    grad.addColorStop(0, 'rgba(255,246,225,0)');
+    grad.addColorStop(1, `rgba(255,246,225,${peak})`);
+  } else {
+    // recessed strand: soft shadow pooling where the neighbor overlaps it
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, `rgba(0,0,0,${peak})`);
+  }
+  ctx.fillStyle = grad;
+  fillFn();
 }
 
 // DIAGONAL WEAVE: unlike stripe/basket (axis-aligned square cells with a diagonal
@@ -277,10 +297,8 @@ function renderDiagonalWeave(p) {
       ctx.filter = 'none';
 
       if (depthAmt > 0) {
-        const baseAlpha = (useA ? 0.10 : 0.07) * depthAmt * tensionDepthMul;
-        const alpha = Math.max(0, Math.min(0.45, baseAlpha));
-        ctx.fillStyle = useA ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
-        ctx.fill();
+        const radius = Math.hypot(cornersXY[0][0] - centroid[0], cornersXY[0][1] - centroid[1]);
+        applyWeaveShadow(centroid[0], centroid[1], radius, useA, depthAmt, tensionDepthMul, () => ctx.fill());
       }
       ctx.restore();
     }
