@@ -22,6 +22,15 @@ const meshVal = document.getElementById('meshVal');
 const directionBtns = document.querySelectorAll('[data-direction]');
 let currentDirection = 'basket';
 
+const exposureASlider = document.getElementById('exposureA');
+const exposureAVal = document.getElementById('exposureAVal');
+const brillianceASlider = document.getElementById('brillianceA');
+const brillianceAVal = document.getElementById('brillianceAVal');
+const exposureBSlider = document.getElementById('exposureB');
+const exposureBVal = document.getElementById('exposureBVal');
+const brillianceBSlider = document.getElementById('brillianceB');
+const brillianceBVal = document.getElementById('brillianceBVal');
+
 const depthAmtSlider = document.getElementById('depthAmt');
 const depthAmtVal = document.getElementById('depthAmtVal');
 const warpSlider = document.getElementById('warp');
@@ -78,6 +87,15 @@ function seededRandom(row, col, salt) {
   return x - Math.floor(x);
 }
 
+// EXPOSURE(露出) -> brightness / BRILLIANCE(鮮やかさ) -> contrast+saturate combined,
+// applied per photo (A/B independently) before that photo's cells are drawn
+function photoFilter(exposureVal, brillianceVal) {
+  const brightness = 1 + exposureVal / 100;
+  const contrast = 1 + brillianceVal / 200;
+  const saturate = 1 + brillianceVal / 100;
+  return `brightness(${brightness}) contrast(${contrast}) saturate(${saturate})`;
+}
+
 function drawCover(img, w, h) {
   const ir = img.naturalWidth / img.naturalHeight;
   const cr = w / h;
@@ -110,6 +128,9 @@ function render() {
   const tensionDepthMul = 1 + tensionFactor * 0.9;
   const backlightOn = backlightToggle.checked && hasC;
   const lightIntensity = parseInt(lightIntensitySlider.value, 10) / 100;
+
+  const filterA = photoFilter(parseInt(exposureASlider.value, 10), parseInt(brillianceASlider.value, 10));
+  const filterB = photoFilter(parseInt(exposureBSlider.value, 10), parseInt(brillianceBSlider.value, 10));
 
   if (backlightOn) {
     ctx.save();
@@ -161,7 +182,9 @@ function render() {
       const fw = jw + tensionSizeAdjust;
       const fh = jh + tensionSizeAdjust;
 
+      ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
+      ctx.filter = 'none';
 
       if (depthAmt > 0) {
         const baseAlpha = (useA ? 0.10 : 0.07) * depthAmt * tensionDepthMul;
@@ -173,7 +196,8 @@ function render() {
   }
 }
 
-[meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, lightIntensitySlider].forEach(el => {
+[meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, lightIntensitySlider,
+ exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
   el.addEventListener('input', () => {
     meshVal.textContent = meshSlider.value;
     warpVal.textContent = warpSlider.value + '%';
@@ -182,6 +206,10 @@ function render() {
     tensionVal.textContent = tensionSlider.value + '%';
     depthAmtVal.textContent = depthAmtSlider.value + '%';
     lightIntensityVal.textContent = lightIntensitySlider.value + '%';
+    exposureAVal.textContent = exposureASlider.value;
+    brillianceAVal.textContent = brillianceASlider.value;
+    exposureBVal.textContent = exposureBSlider.value;
+    brillianceBVal.textContent = brillianceBSlider.value;
     render();
   });
 });
@@ -191,10 +219,13 @@ resetBtn.addEventListener('click', () => {
   meshSlider.value = 40; depthAmtSlider.value = 60; warpSlider.value = 0;
   imperfectionSlider.value = 15; densitySlider.value = 50; tensionSlider.value = 50;
   backlightToggle.checked = false; lightIntensitySlider.value = 50;
+  exposureASlider.value = 0; brillianceASlider.value = 0;
+  exposureBSlider.value = 0; brillianceBSlider.value = 0;
   directionBtns.forEach(b => b.classList.remove('active'));
   document.querySelector('[data-direction="basket"]').classList.add('active');
   currentDirection = 'basket';
-  [meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, lightIntensitySlider]
+  [meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, lightIntensitySlider,
+   exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider]
     .forEach(el => el.dispatchEvent(new Event('input')));
 });
 

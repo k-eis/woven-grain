@@ -173,6 +173,37 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
       </div>
 
       <div class="ctrl-group">
+        <div class="ctrl-label"><span class="name">PHOTO ADJUSTMENTS <span class="jp-small">写真ごとの調整</span></span></div>
+        <div class="ctrl-label" style="margin-top:2px;">
+          <span class="name" style="font-size:9px; color:var(--muted);">PHOTO A</span>
+        </div>
+        <div class="ctrl-label" style="margin-bottom:4px; margin-top:8px;">
+          <span class="name" style="font-size:9px; color:var(--muted);">EXPOSURE <span class="jp-small">露出</span></span>
+          <span class="val" id="exposureAVal">0</span>
+        </div>
+        <input type="range" id="exposureA" min="-50" max="50" value="0">
+        <div class="ctrl-label" style="margin-bottom:4px; margin-top:10px;">
+          <span class="name" style="font-size:9px; color:var(--muted);">BRILLIANCE <span class="jp-small">鮮やかさ</span></span>
+          <span class="val" id="brillianceAVal">0</span>
+        </div>
+        <input type="range" id="brillianceA" min="-50" max="50" value="0">
+
+        <div class="ctrl-label" style="margin-top:16px;">
+          <span class="name" style="font-size:9px; color:var(--muted);">PHOTO B</span>
+        </div>
+        <div class="ctrl-label" style="margin-bottom:4px; margin-top:8px;">
+          <span class="name" style="font-size:9px; color:var(--muted);">EXPOSURE <span class="jp-small">露出</span></span>
+          <span class="val" id="exposureBVal">0</span>
+        </div>
+        <input type="range" id="exposureB" min="-50" max="50" value="0">
+        <div class="ctrl-label" style="margin-bottom:4px; margin-top:10px;">
+          <span class="name" style="font-size:9px; color:var(--muted);">BRILLIANCE <span class="jp-small">鮮やかさ</span></span>
+          <span class="val" id="brillianceBVal">0</span>
+        </div>
+        <input type="range" id="brillianceB" min="-50" max="50" value="0">
+      </div>
+
+      <div class="ctrl-group">
         <div class="ctrl-label"><span class="name">CHARACTER PARAMETERS <span class="jp-small">表現の調整</span></span></div>
       </div>
 
