@@ -209,10 +209,15 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 
       <div class="ctrl-group">
         <div class="ctrl-label">
-          <span class="name">WEAVE DEPTH <span class="jp-small">上下関係</span></span>
+          <span class="name">WEAVE DEPTH <span class="jp-small">上下関係（影の強さ）</span></span>
           <span class="val" id="depthAmtVal">60%</span>
         </div>
         <input type="range" id="depthAmt" min="0" max="100" value="60">
+        <div class="ctrl-label" style="margin-top:10px;">
+          <span class="name" style="font-size:9px; color:var(--muted);">SHADOW REACH <span class="jp-small">影の届く範囲</span></span>
+          <span class="val" id="shadowReachVal">40%</span>
+        </div>
+        <input type="range" id="shadowReach" min="0" max="100" value="40">
       </div>
 
       <div class="ctrl-group">

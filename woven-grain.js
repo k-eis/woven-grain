@@ -33,6 +33,8 @@ const brillianceBVal = document.getElementById('brillianceBVal');
 
 const depthAmtSlider = document.getElementById('depthAmt');
 const depthAmtVal = document.getElementById('depthAmtVal');
+const shadowReachSlider = document.getElementById('shadowReach');
+const shadowReachVal = document.getElementById('shadowReachVal');
 const warpSlider = document.getElementById('warp');
 const warpVal = document.getElementById('warpVal');
 const imperfectionSlider = document.getElementById('imperfection');
@@ -119,6 +121,7 @@ function render() {
 
   const mesh = parseInt(meshSlider.value, 10);
   const depthAmt = parseInt(depthAmtSlider.value, 10) / 100;
+  const shadowReach = parseInt(shadowReachSlider.value, 10) / 100;
   const warpAmt = parseInt(warpSlider.value, 10) / 100 * 18;
   const imperfAmt = parseInt(imperfectionSlider.value, 10) / 100 * mesh * 0.3;
   const density = parseInt(densitySlider.value, 10);
@@ -140,7 +143,7 @@ function render() {
   }
 
   if (currentDirection === 'diagonal') {
-    renderDiagonalWeave({ mesh, depthAmt, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
+    renderDiagonalWeave({ mesh, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
     return;
   }
 
@@ -193,7 +196,7 @@ function render() {
       if (depthAmt > 0) {
         const ccx = fx + fw / 2, ccy = fy + fh / 2;
         const radius = Math.hypot(fw, fh) / 2;
-        applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, tensionDepthMul, () => ctx.fillRect(fx, fy, fw, fh));
+        applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, shadowReach, tensionDepthMul, () => ctx.fillRect(fx, fy, fw, fh));
       }
     }
   }
@@ -201,21 +204,19 @@ function render() {
 
 // Simulates the small pooled shadow / raised-edge highlight where one strand
 // crosses over another in a real basket weave — darkest/brightest right at the
-// cell's own boundary (the seam with its neighbor), fading to nothing at the
-// center, rather than a single flat tint across the whole cell.
-function applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, tensionDepthMul, fillFn) {
+// cell's own boundary (the seam with its neighbor), fading to nothing toward the
+// center. shadowReach (0-1) controls how far inward from the boundary the glow
+// extends: near 0 keeps it a thin line right at the seam, near 1 lets it bleed
+// broadly toward the cell's center.
+function applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, shadowReach, tensionDepthMul, fillFn) {
   const peak = Math.max(0, Math.min(0.5, (useA ? 0.16 : 0.22) * depthAmt * tensionDepthMul));
   if (peak <= 0.002) return;
   const grad = ctx.createRadialGradient(ccx, ccy, 0, ccx, ccy, radius);
-  if (useA) {
-    // raised strand: subtle warm highlight catching the light right at its edge
-    grad.addColorStop(0, 'rgba(255,246,225,0)');
-    grad.addColorStop(1, `rgba(255,246,225,${peak})`);
-  } else {
-    // recessed strand: soft shadow pooling where the neighbor overlaps it
-    grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(1, `rgba(0,0,0,${peak})`);
-  }
+  const transitionStart = Math.max(0, Math.min(0.995, 1 - shadowReach));
+  const color = useA ? '255,246,225' : '0,0,0';
+  grad.addColorStop(0, `rgba(${color},0)`);
+  grad.addColorStop(transitionStart, `rgba(${color},0)`);
+  grad.addColorStop(1, `rgba(${color},${peak})`);
   ctx.fillStyle = grad;
   fillFn();
 }
@@ -225,7 +226,7 @@ function applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, tensionDepthMul, fil
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
 function renderDiagonalWeave(p) {
-  const { mesh, depthAmt, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
+  const { mesh, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
   const cx = w / 2, cy = h / 2;
   const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2; // 45°
@@ -298,14 +299,14 @@ function renderDiagonalWeave(p) {
 
       if (depthAmt > 0) {
         const radius = Math.hypot(cornersXY[0][0] - centroid[0], cornersXY[0][1] - centroid[1]);
-        applyWeaveShadow(centroid[0], centroid[1], radius, useA, depthAmt, tensionDepthMul, () => ctx.fill());
+        applyWeaveShadow(centroid[0], centroid[1], radius, useA, depthAmt, shadowReach, tensionDepthMul, () => ctx.fill());
       }
       ctx.restore();
     }
   }
 }
 
-[meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, lightIntensitySlider,
+[meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
  exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
   el.addEventListener('input', () => {
     meshVal.textContent = meshSlider.value;
@@ -314,6 +315,7 @@ function renderDiagonalWeave(p) {
     densityVal.textContent = densitySlider.value + '%';
     tensionVal.textContent = tensionSlider.value + '%';
     depthAmtVal.textContent = depthAmtSlider.value + '%';
+    shadowReachVal.textContent = shadowReachSlider.value + '%';
     lightIntensityVal.textContent = lightIntensitySlider.value + '%';
     exposureAVal.textContent = exposureASlider.value;
     brillianceAVal.textContent = brillianceASlider.value;
@@ -325,7 +327,7 @@ function renderDiagonalWeave(p) {
 backlightToggle.addEventListener('change', render);
 
 resetBtn.addEventListener('click', () => {
-  meshSlider.value = 40; depthAmtSlider.value = 60; warpSlider.value = 0;
+  meshSlider.value = 40; depthAmtSlider.value = 60; shadowReachSlider.value = 40; warpSlider.value = 0;
   imperfectionSlider.value = 15; densitySlider.value = 50; tensionSlider.value = 50;
   backlightToggle.checked = false; lightIntensitySlider.value = 50;
   exposureASlider.value = 0; brillianceASlider.value = 0;
@@ -333,7 +335,7 @@ resetBtn.addEventListener('click', () => {
   directionBtns.forEach(b => b.classList.remove('active'));
   document.querySelector('[data-direction="basket"]').classList.add('active');
   currentDirection = 'basket';
-  [meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, lightIntensitySlider,
+  [meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
    exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider]
     .forEach(el => el.dispatchEvent(new Event('input')));
 });
