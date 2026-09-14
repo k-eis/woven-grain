@@ -12,22 +12,33 @@ const outputCanvas = document.getElementById('outputCanvas');
 const ctx = outputCanvas.getContext('2d');
 const canvasHint = document.getElementById('canvasHint');
 
-// THEME SWITCH: 3 palettes (dark / beige-b / beige-c) via [data-theme] on <html>,
-// remembered in localStorage across visits
-const themeDots = document.querySelectorAll('.theme-dot');
-const savedTheme = localStorage.getItem('woven-grain-theme');
-if (savedTheme) {
-  document.documentElement.dataset.theme = savedTheme;
-  themeDots.forEach(d => d.classList.toggle('active', d.dataset.t === savedTheme));
+// THEME SWITCH: matches the series convention (body.theme-xxx class swap),
+// two beige palettes only — Sarashi（晒し布×真鍮、既定）／Touki（陶器×抹茶）
+const themeBtns = document.querySelectorAll('.theme-btn');
+const THEME_CLASS_MAP = { sarashi: null, touki: 'theme-touki' };
+
+function applyTheme(themeKey) {
+  if (!(themeKey in THEME_CLASS_MAP)) return;
+  Object.values(THEME_CLASS_MAP).forEach(cls => { if (cls) document.body.classList.remove(cls); });
+  const cls = THEME_CLASS_MAP[themeKey];
+  if (cls) document.body.classList.add(cls);
+  themeBtns.forEach(b => b.classList.toggle('active', b.dataset.theme === themeKey));
+  try { localStorage.setItem('wovengrain-theme', themeKey); } catch (e) {}
 }
-themeDots.forEach(dot => {
-  dot.addEventListener('click', () => {
-    const t = dot.dataset.t;
-    document.documentElement.dataset.theme = t;
-    localStorage.setItem('woven-grain-theme', t);
-    themeDots.forEach(d => d.classList.toggle('active', d === dot));
-  });
+
+themeBtns.forEach(btn => {
+  btn.addEventListener('click', () => applyTheme(btn.dataset.theme));
 });
+
+(function initTheme() {
+  let savedTheme = null;
+  try { savedTheme = localStorage.getItem('wovengrain-theme'); } catch (e) {}
+  if (savedTheme && (savedTheme in THEME_CLASS_MAP)) {
+    applyTheme(savedTheme);
+  } else if (savedTheme) {
+    try { localStorage.removeItem('wovengrain-theme'); } catch (e) {}
+  }
+})();
 
 const imgA = new Image();
 const imgB = new Image();
