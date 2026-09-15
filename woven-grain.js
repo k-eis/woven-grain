@@ -118,10 +118,11 @@ function seededRandom(row, col, salt) {
 }
 
 // EXPOSURE(露出) -> brightness / BRILLIANCE(鮮やかさ) -> contrast+saturate combined,
-// applied per photo (A/B independently) before that photo's cells are drawn
+// applied per photo (A/B independently) before that photo's cells are drawn.
+// レンジは-100〜100、露出は0〜2倍（-100で真っ黒）、鮮やかさは彩度0〜2倍＋コントラスト強調
 function photoFilter(exposureVal, brillianceVal) {
   const brightness = 1 + exposureVal / 100;
-  const contrast = 1 + brillianceVal / 200;
+  const contrast = 1 + brillianceVal / 130;
   const saturate = 1 + brillianceVal / 100;
   return `brightness(${brightness}) contrast(${contrast}) saturate(${saturate})`;
 }
@@ -148,6 +149,7 @@ function render() {
   downloadBtn.disabled = false;
 
   const mesh = parseInt(meshSlider.value, 10);
+  const zoomFactor = Math.max(1, mesh / 40); // MESH SIZEに比例して写真をズームイン（40が基準・変化なし）
   const depthAmt = parseInt(depthAmtSlider.value, 10) / 100;
   const shadowReach = parseInt(shadowReachSlider.value, 10) / 100;
   const warpAmt = parseInt(warpSlider.value, 10) / 100 * 18;
@@ -171,7 +173,7 @@ function render() {
   }
 
   if (currentDirection === 'diagonal') {
-    renderDiagonalWeave({ mesh, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
+    renderDiagonalWeave({ mesh, zoomFactor, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
     return;
   }
 
@@ -196,9 +198,10 @@ function render() {
       const srcImg = useA ? imgA : imgB;
       const ir = srcImg.naturalWidth / srcImg.naturalHeight;
       const cr = w / h;
-      let scale, offX, offY;
-      if (ir > cr) { scale = srcImg.naturalHeight / h; offX = (srcImg.naturalWidth - w * scale) / 2; offY = 0; }
-      else { scale = srcImg.naturalWidth / w; offX = 0; offY = (srcImg.naturalHeight - h * scale) / 2; }
+      const baseScale = ir > cr ? srcImg.naturalHeight / h : srcImg.naturalWidth / w;
+      const scale = baseScale * zoomFactor;
+      const offX = (srcImg.naturalWidth - w * scale) / 2;
+      const offY = (srcImg.naturalHeight - h * scale) / 2;
 
       const warpX = warpAmt * Math.sin(gy * 0.05 + col);
       const warpY = warpAmt * Math.sin(gx * 0.05 + row);
@@ -254,7 +257,7 @@ function applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, shadowReach, tension
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
 function renderDiagonalWeave(p) {
-  const { mesh, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
+  const { mesh, zoomFactor, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
   const cx = w / 2, cy = h / 2;
   const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2; // 45°
@@ -262,13 +265,15 @@ function renderDiagonalWeave(p) {
   const diag = Math.sqrt(w * w + h * h);
   const range = Math.ceil(diag / 2 / mesh) + 2;
 
-  // precompute cover-fit mapping (source <- canvas) once per photo, reused for every diamond's bounding box
+  // precompute cover-fit mapping (source <- canvas) once per photo, reused for every diamond's bounding box.
+  // zoomFactor (tied to MESH SIZE) scales past the normal cover-fit baseline so a wider mesh reads as more zoomed-in.
   function coverMap(img) {
     const ir = img.naturalWidth / img.naturalHeight;
     const cr = w / h;
-    let scale, offX, offY;
-    if (ir > cr) { scale = img.naturalHeight / h; offX = (img.naturalWidth - w * scale) / 2; offY = 0; }
-    else { scale = img.naturalWidth / w; offX = 0; offY = (img.naturalHeight - h * scale) / 2; }
+    const baseScale = ir > cr ? img.naturalHeight / h : img.naturalWidth / w;
+    const scale = baseScale * zoomFactor;
+    const offX = (img.naturalWidth - w * scale) / 2;
+    const offY = (img.naturalHeight - h * scale) / 2;
     return { scale, offX, offY };
   }
   const mapA = coverMap(imgA), mapB = coverMap(imgB);
