@@ -47,6 +47,8 @@ let hasA = false, hasB = false, hasC = false;
 
 const meshSlider = document.getElementById('mesh');
 const meshVal = document.getElementById('meshVal');
+const strandLengthSlider = document.getElementById('strandLength');
+const strandLengthVal = document.getElementById('strandLengthVal');
 const directionBtns = document.querySelectorAll('[data-direction]');
 let currentDirection = 'basket';
 
@@ -150,6 +152,7 @@ function render() {
 
   const mesh = parseInt(meshSlider.value, 10);
   const zoomFactor = Math.max(1, mesh / 40); // MESH SIZEに比例して写真をズームイン（40が基準・変化なし）
+  const strandLength = parseInt(strandLengthSlider.value, 10);
   const depthAmt = parseInt(depthAmtSlider.value, 10) / 100;
   const shadowReach = parseInt(shadowReachSlider.value, 10) / 100;
   const warpAmt = parseInt(warpSlider.value, 10) / 100 * 18;
@@ -173,7 +176,7 @@ function render() {
   }
 
   if (currentDirection === 'diagonal') {
-    renderDiagonalWeave({ mesh, zoomFactor, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
+    renderDiagonalWeave({ mesh, zoomFactor, strandLength, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
     return;
   }
 
@@ -182,14 +185,19 @@ function render() {
       const col = Math.floor(gx / mesh);
       const row = Math.floor(gy / mesh);
       let baseUseA;
+      // STRAND LENGTH groups multiple cells into one continuous-looking strand segment
+      // (real basket weave doesn't alternate every single tiny square — see basket weave
+      // grouping pairs of threads), instead of a fine 1×1 checkerboard reading as disconnected tiles.
+      const gRow = Math.floor(row / strandLength);
+      const gCol = Math.floor(col / strandLength);
       if (currentDirection === 'stripe') baseUseA = col % 2 === 0;
-      else baseUseA = (row + col) % 2 === 0;
+      else baseUseA = (gRow + gCol) % 2 === 0;
 
       let useA = baseUseA;
       if (density > 50 && !baseUseA) {
-        if (seededRandom(row, col, 5) < (density - 50) / 50) useA = true;
+        if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true;
       } else if (density < 50 && baseUseA) {
-        if (seededRandom(row, col, 5) < (50 - density) / 50) useA = false;
+        if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false;
       }
 
       const cw = Math.min(mesh, w - gx);
@@ -225,8 +233,19 @@ function render() {
       ctx.filter = 'none';
 
       if (depthAmt > 0) {
-        const ccx = fx + fw / 2, ccy = fy + fh / 2;
-        const radius = Math.hypot(fw, fh) / 2;
+        // shadow/highlight is computed from the whole STRAND SEGMENT's bounding box
+        // (not just this one small cell), so it reads as one continuous glow across
+        // the segment rather than a separate vignette per tiny tile
+        let gx0, gy0, gw0, gh0;
+        if (currentDirection === 'stripe') {
+          gx0 = col * mesh; gy0 = 0; gw0 = mesh; gh0 = h;
+        } else {
+          gx0 = gCol * strandLength * mesh; gy0 = gRow * strandLength * mesh;
+          gw0 = Math.min(strandLength * mesh, w - gx0);
+          gh0 = Math.min(strandLength * mesh, h - gy0);
+        }
+        const ccx = gx0 + gw0 / 2, ccy = gy0 + gh0 / 2;
+        const radius = Math.hypot(gw0, gh0) / 2;
         applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, shadowReach, tensionDepthMul, () => ctx.fillRect(fx, fy, fw, fh));
       }
     }
@@ -257,7 +276,7 @@ function applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, shadowReach, tension
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
 function renderDiagonalWeave(p) {
-  const { mesh, zoomFactor, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
+  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
   const cx = w / 2, cy = h / 2;
   const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2; // 45°
@@ -281,12 +300,16 @@ function renderDiagonalWeave(p) {
   for (let row = -range; row <= range; row++) {
     for (let col = -range; col <= range; col++) {
       const u0 = row * mesh, v0 = col * mesh;
-      let baseUseA = (row + col) % 2 === 0;
+      // STRAND LENGTH groups neighboring diamonds into the same continuous segment,
+      // same rationale as basket/stripe below
+      const gRow = Math.floor(row / strandLength);
+      const gCol = Math.floor(col / strandLength);
+      let baseUseA = (gRow + gCol) % 2 === 0;
       let useA = baseUseA;
       if (density > 50 && !baseUseA) {
-        if (seededRandom(row, col, 5) < (density - 50) / 50) useA = true;
+        if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true;
       } else if (density < 50 && baseUseA) {
-        if (seededRandom(row, col, 5) < (50 - density) / 50) useA = false;
+        if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false;
       }
 
       // diamond corners: rotated-grid square -> screen space, with IMPERFECTION
@@ -331,18 +354,25 @@ function renderDiagonalWeave(p) {
       ctx.filter = 'none';
 
       if (depthAmt > 0) {
-        const radius = Math.hypot(cornersXY[0][0] - centroid[0], cornersXY[0][1] - centroid[1]);
-        applyWeaveShadow(centroid[0], centroid[1], radius, useA, depthAmt, shadowReach, tensionDepthMul, () => ctx.fill());
+        // shadow spans the whole strand-segment group (not just this one diamond),
+        // same continuity rationale as the axis-aligned modes above
+        const gu = gRow * strandLength * mesh + (strandLength * mesh) / 2;
+        const gv = gCol * strandLength * mesh + (strandLength * mesh) / 2;
+        const gcx = gu * cosA - gv * sinA + cx;
+        const gcy = gu * sinA + gv * cosA + cy;
+        const groupRadius = (mesh * Math.SQRT1_2) * strandLength;
+        applyWeaveShadow(gcx, gcy, groupRadius, useA, depthAmt, shadowReach, tensionDepthMul, () => ctx.fill());
       }
       ctx.restore();
     }
   }
 }
 
-[meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
+[meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
  exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
   el.addEventListener('input', () => {
     meshVal.textContent = meshSlider.value;
+    strandLengthVal.textContent = strandLengthSlider.value;
     warpVal.textContent = warpSlider.value + '%';
     imperfectionVal.textContent = imperfectionSlider.value + '%';
     densityVal.textContent = densitySlider.value + '%';
@@ -360,7 +390,7 @@ function renderDiagonalWeave(p) {
 backlightToggle.addEventListener('change', render);
 
 resetBtn.addEventListener('click', () => {
-  meshSlider.value = 40; depthAmtSlider.value = 60; shadowReachSlider.value = 40; warpSlider.value = 0;
+  meshSlider.value = 40; strandLengthSlider.value = 2; depthAmtSlider.value = 60; shadowReachSlider.value = 40; warpSlider.value = 0;
   imperfectionSlider.value = 15; densitySlider.value = 50; tensionSlider.value = 50;
   backlightToggle.checked = false; lightIntensitySlider.value = 50;
   exposureASlider.value = 0; brillianceASlider.value = 0;
@@ -368,7 +398,7 @@ resetBtn.addEventListener('click', () => {
   directionBtns.forEach(b => b.classList.remove('active'));
   document.querySelector('[data-direction="basket"]').classList.add('active');
   currentDirection = 'basket';
-  [meshSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
+  [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
    exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider]
     .forEach(el => el.dispatchEvent(new Event('input')));
 });
