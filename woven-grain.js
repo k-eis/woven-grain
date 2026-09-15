@@ -47,6 +47,7 @@ let hasA = false, hasB = false, hasC = false;
 
 const meshSlider = document.getElementById('mesh');
 const meshVal = document.getElementById('meshVal');
+const zoomWithMeshToggle = document.getElementById('zoomWithMesh');
 const strandLengthSlider = document.getElementById('strandLength');
 const strandLengthVal = document.getElementById('strandLengthVal');
 const directionBtns = document.querySelectorAll('[data-direction]');
@@ -114,6 +115,8 @@ directionBtns.forEach(btn => {
   });
 });
 
+zoomWithMeshToggle.addEventListener('change', render);
+
 function seededRandom(row, col, salt) {
   let x = Math.sin(row * 127.1 + col * 311.7 + salt * 74.7) * 43758.5453;
   return x - Math.floor(x);
@@ -151,7 +154,8 @@ function render() {
   downloadBtn.disabled = false;
 
   const mesh = parseInt(meshSlider.value, 10);
-  const zoomFactor = Math.max(1, mesh / 40); // MESH SIZEに比例して写真をズームイン（40が基準・変化なし）
+  const zoomWithMesh = zoomWithMeshToggle.checked;
+  const zoomFactor = zoomWithMesh ? Math.max(1, mesh / 40) : 1; // 既定はOFF：MESH SIZEを変えても写真サイズは変わらない
   const strandLength = parseInt(strandLengthSlider.value, 10);
   const depthAmt = parseInt(depthAmtSlider.value, 10) / 100;
   const shadowReach = parseInt(shadowReachSlider.value, 10) / 100;
@@ -232,10 +236,13 @@ function render() {
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
       ctx.filter = 'none';
 
-      if (depthAmt > 0) {
-        // shadow/highlight is computed from the whole STRAND SEGMENT's bounding box
-        // (not just this one small cell), so it reads as one continuous glow across
-        // the segment rather than a separate vignette per tiny tile
+      // draw the strand-segment's shadow/highlight only ONCE per group, from its
+      // top-left anchor cell — not once per constituent cell — so the four edge
+      // glows aren't stacked on top of each other inside the same group
+      const isGroupAnchor = currentDirection === 'stripe'
+        ? (row === 0)
+        : (row % strandLength === 0 && col % strandLength === 0);
+      if (depthAmt > 0 && isGroupAnchor) {
         let gx0, gy0, gw0, gh0;
         if (currentDirection === 'stripe') {
           gx0 = col * mesh; gy0 = 0; gw0 = mesh; gh0 = h;
@@ -244,31 +251,77 @@ function render() {
           gw0 = Math.min(strandLength * mesh, w - gx0);
           gh0 = Math.min(strandLength * mesh, h - gy0);
         }
-        const ccx = gx0 + gw0 / 2, ccy = gy0 + gh0 / 2;
-        const radius = Math.hypot(gw0, gh0) / 2;
-        applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, shadowReach, tensionDepthMul, () => ctx.fillRect(fx, fy, fw, fh));
+        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, depthAmt, shadowReach, tensionDepthMul);
       }
     }
   }
 }
 
 // Simulates the small pooled shadow / raised-edge highlight where one strand
-// crosses over another in a real basket weave — darkest/brightest right at the
-// cell's own boundary (the seam with its neighbor), fading to nothing toward the
-// center. shadowReach (0-1) controls how far inward from the boundary the glow
-// extends: near 0 keeps it a thin line right at the seam, near 1 lets it bleed
-// broadly toward the cell's center.
-function applyWeaveShadow(ccx, ccy, radius, useA, depthAmt, shadowReach, tensionDepthMul, fillFn) {
+// crosses under/over another in a real basket weave — concentrated right at the
+// shape's own boundary edges (the seam with its neighbor), fading inward.
+// Drawn as 4 edge-hugging gradient strips rather than one circular radial
+// gradient, so it reads as a clean border hugging the actual rectangle instead
+// of a round spotlight sitting in the middle of the tile.
+function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul) {
   const peak = Math.max(0, Math.min(0.5, (useA ? 0.16 : 0.22) * depthAmt * tensionDepthMul));
   if (peak <= 0.002) return;
-  const grad = ctx.createRadialGradient(ccx, ccy, 0, ccx, ccy, radius);
-  const transitionStart = Math.max(0, Math.min(0.995, 1 - shadowReach));
+  const reach = Math.max(1, Math.min(w, h) * 0.5 * Math.max(0.04, shadowReach));
   const color = useA ? '255,246,225' : '0,0,0';
-  grad.addColorStop(0, `rgba(${color},0)`);
-  grad.addColorStop(transitionStart, `rgba(${color},0)`);
-  grad.addColorStop(1, `rgba(${color},${peak})`);
-  ctx.fillStyle = grad;
-  fillFn();
+
+  let g = ctx.createLinearGradient(0, y, 0, y + reach);
+  g.addColorStop(0, `rgba(${color},${peak})`);
+  g.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, reach);
+
+  g = ctx.createLinearGradient(0, y + h, 0, y + h - reach);
+  g.addColorStop(0, `rgba(${color},${peak})`);
+  g.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = g; ctx.fillRect(x, y + h - reach, w, reach);
+
+  g = ctx.createLinearGradient(x, 0, x + reach, 0);
+  g.addColorStop(0, `rgba(${color},${peak})`);
+  g.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = g; ctx.fillRect(x, y, reach, h);
+
+  g = ctx.createLinearGradient(x + w, 0, x + w - reach, 0);
+  g.addColorStop(0, `rgba(${color},${peak})`);
+  g.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = g; ctx.fillRect(x + w - reach, y, reach, h);
+}
+
+// Same idea as applyEdgeGlow but for an arbitrary quadrilateral (the rotated
+// diamond groups in DIAGONAL mode) — walks each of the 4 edges and draws a
+// gradient strip extruded inward along that edge's own inward normal.
+function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepthMul) {
+  const peak = Math.max(0, Math.min(0.5, (useA ? 0.16 : 0.22) * depthAmt * tensionDepthMul));
+  if (peak <= 0.002) return;
+  const centroid = corners.reduce((a, c) => [a[0] + c[0] / corners.length, a[1] + c[1] / corners.length], [0, 0]);
+  const edgeLen = Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
+  const reach = Math.max(1, edgeLen * 0.5 * Math.max(0.04, shadowReach));
+  const color = useA ? '255,246,225' : '0,0,0';
+
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i], b = corners[(i + 1) % corners.length];
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    let nx = mx - centroid[0], ny = my - centroid[1];
+    const nlen = Math.hypot(nx, ny) || 1;
+    nx /= nlen; ny /= nlen; // inward-pointing unit normal for this edge
+    const a2 = [a[0] - nx * reach, a[1] - ny * reach];
+    const b2 = [b[0] - nx * reach, b[1] - ny * reach];
+
+    const g = ctx.createLinearGradient(mx, my, mx - nx * reach, my - ny * reach);
+    g.addColorStop(0, `rgba(${color},${peak})`);
+    g.addColorStop(1, `rgba(${color},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0], b[1]);
+    ctx.lineTo(b2[0], b2[1]);
+    ctx.lineTo(a2[0], a2[1]);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 // DIAGONAL WEAVE: unlike stripe/basket (axis-aligned square cells with a diagonal
@@ -352,18 +405,31 @@ function renderDiagonalWeave(p) {
       ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(useA ? imgA : imgB, sx, sy, sw, sh, bx, by, bw, bh);
       ctx.filter = 'none';
-
-      if (depthAmt > 0) {
-        // shadow spans the whole strand-segment group (not just this one diamond),
-        // same continuity rationale as the axis-aligned modes above
-        const gu = gRow * strandLength * mesh + (strandLength * mesh) / 2;
-        const gv = gCol * strandLength * mesh + (strandLength * mesh) / 2;
-        const gcx = gu * cosA - gv * sinA + cx;
-        const gcy = gu * sinA + gv * cosA + cy;
-        const groupRadius = (mesh * Math.SQRT1_2) * strandLength;
-        applyWeaveShadow(gcx, gcy, groupRadius, useA, depthAmt, shadowReach, tensionDepthMul, () => ctx.fill());
-      }
       ctx.restore();
+
+      // group-level shadow: drawn once per group (from its anchor diamond), clipped
+      // to the BIG group diamond's own path (not the small per-cell one) so the glow
+      // hugs the group's true outer edge instead of stacking a blob on every sub-cell
+      const isGroupAnchor = row % strandLength === 0 && col % strandLength === 0;
+      if (depthAmt > 0 && isGroupAnchor) {
+        const gu0 = row * mesh, gv0 = col * mesh;
+        const gSize = strandLength * mesh;
+        const groupCornersUV = [[gu0, gv0], [gu0 + gSize, gv0], [gu0 + gSize, gv0 + gSize], [gu0, gv0 + gSize]];
+        let groupCorners = groupCornersUV.map(([u, v]) => [u * cosA - v * sinA + cx, u * sinA + v * cosA + cy]);
+        const gCentroid = groupCorners.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
+        groupCorners = groupCorners.map(([x, y]) => [
+          gCentroid[0] + (x - gCentroid[0]) * tensionScale,
+          gCentroid[1] + (y - gCentroid[1]) * tensionScale
+        ]);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(groupCorners[0][0], groupCorners[0][1]);
+        for (let i = 1; i < groupCorners.length; i++) ctx.lineTo(groupCorners[i][0], groupCorners[i][1]);
+        ctx.closePath();
+        ctx.clip();
+        applyPolygonEdgeGlow(groupCorners, useA, depthAmt, shadowReach, tensionDepthMul);
+        ctx.restore();
+      }
     }
   }
 }
@@ -393,6 +459,7 @@ resetBtn.addEventListener('click', () => {
   meshSlider.value = 40; strandLengthSlider.value = 2; depthAmtSlider.value = 60; shadowReachSlider.value = 40; warpSlider.value = 0;
   imperfectionSlider.value = 15; densitySlider.value = 50; tensionSlider.value = 50;
   backlightToggle.checked = false; lightIntensitySlider.value = 50;
+  zoomWithMeshToggle.checked = false;
   exposureASlider.value = 0; brillianceASlider.value = 0;
   exposureBSlider.value = 0; brillianceBSlider.value = 0;
   directionBtns.forEach(b => b.classList.remove('active'));
@@ -401,6 +468,7 @@ resetBtn.addEventListener('click', () => {
   [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
    exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider]
     .forEach(el => el.dispatchEvent(new Event('input')));
+  render();
 });
 
 function isIOS() {
