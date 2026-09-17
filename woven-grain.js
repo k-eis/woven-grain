@@ -66,6 +66,10 @@ const depthAmtSlider = document.getElementById('depthAmt');
 const depthAmtVal = document.getElementById('depthAmtVal');
 const shadowReachSlider = document.getElementById('shadowReach');
 const shadowReachVal = document.getElementById('shadowReachVal');
+const lightDirectionSlider = document.getElementById('lightDirection');
+const lightDirectionVal = document.getElementById('lightDirectionVal');
+const grainSlider = document.getElementById('grain');
+const grainVal = document.getElementById('grainVal');
 const warpSlider = document.getElementById('warp');
 const warpVal = document.getElementById('warpVal');
 const imperfectionSlider = document.getElementById('imperfection');
@@ -81,7 +85,10 @@ const lightIntensityVal = document.getElementById('lightIntensityVal');
 const downloadBtn = document.getElementById('downloadBtn');
 const resetBtn = document.getElementById('resetBtn');
 
-function wireDrop(dropId, fileId, img, onLoaded) {
+const previewA = document.getElementById('previewA');
+const previewB = document.getElementById('previewB');
+
+function wireDrop(dropId, fileId, img, onLoaded, useBackgroundImage) {
   const drop = document.getElementById(dropId);
   const file = document.getElementById(fileId);
   drop.addEventListener('click', () => file.click());
@@ -93,7 +100,7 @@ function wireDrop(dropId, fileId, img, onLoaded) {
       img.onload = () => {
         onLoaded();
         drop.classList.add('filled');
-        drop.style.backgroundImage = `url(${ev.target.result})`;
+        if (useBackgroundImage) drop.style.backgroundImage = `url(${ev.target.result})`;
         render();
       };
       img.src = ev.target.result;
@@ -102,9 +109,9 @@ function wireDrop(dropId, fileId, img, onLoaded) {
   });
 }
 
-wireDrop('dropA', 'fileA', imgA, () => { hasA = true; });
-wireDrop('dropB', 'fileB', imgB, () => { hasB = true; });
-wireDrop('dropC', 'fileC', imgC, () => { hasC = true; });
+wireDrop('dropA', 'fileA', imgA, () => { hasA = true; }, false);
+wireDrop('dropB', 'fileB', imgB, () => { hasB = true; }, false);
+wireDrop('dropC', 'fileC', imgC, () => { hasC = true; }, true);
 
 directionBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -132,18 +139,45 @@ function photoFilter(exposureVal, brillianceVal) {
   return `brightness(${brightness}) contrast(${contrast}) saturate(${saturate})`;
 }
 
-function drawCover(img, w, h) {
+function drawCover(img, w, h, destCtx) {
+  const targetCtx = destCtx || ctx;
   const ir = img.naturalWidth / img.naturalHeight;
   const cr = w / h;
   let sx, sy, sw, sh;
   if (ir > cr) { sh = img.naturalHeight; sw = sh * cr; sx = (img.naturalWidth - sw) / 2; sy = 0; }
   else { sw = img.naturalWidth; sh = sw / cr; sx = 0; sy = (img.naturalHeight - sh) / 2; }
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+  targetCtx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+}
+
+// keeps the Photo A/B dropzone thumbnails in sync with their own EXPOSURE/BRILLIANCE —
+// so adjusting a photo's sliders visibly changes that photo's own preview, not just the
+// woven output
+function updatePreviews(filterA, filterB) {
+  if (hasA && previewA) {
+    previewA.width = previewA.clientWidth || 160;
+    previewA.height = previewA.clientHeight || 160;
+    const pctx = previewA.getContext('2d');
+    pctx.filter = filterA;
+    drawCover(imgA, previewA.width, previewA.height, pctx);
+    pctx.filter = 'none';
+  }
+  if (hasB && previewB) {
+    previewB.width = previewB.clientWidth || 160;
+    previewB.height = previewB.clientHeight || 160;
+    const pctx = previewB.getContext('2d');
+    pctx.filter = filterB;
+    drawCover(imgB, previewB.width, previewB.height, pctx);
+    pctx.filter = 'none';
+  }
 }
 
 function render() {
   const w = outputCanvas.width, h = outputCanvas.height;
   ctx.clearRect(0, 0, w, h);
+
+  const filterA = photoFilter(parseInt(exposureASlider.value, 10), parseInt(brillianceASlider.value, 10));
+  const filterB = photoFilter(parseInt(exposureBSlider.value, 10), parseInt(brillianceBSlider.value, 10));
+  updatePreviews(filterA, filterB);
 
   if (!hasA || !hasB) {
     canvasHint.style.display = 'block';
@@ -159,6 +193,10 @@ function render() {
   const strandLength = parseInt(strandLengthSlider.value, 10);
   const depthAmt = parseInt(depthAmtSlider.value, 10) / 100;
   const shadowReach = parseInt(shadowReachSlider.value, 10) / 100;
+  const lightDirectionDeg = parseInt(lightDirectionSlider.value, 10);
+  // 0°=top, 90°=right, 180°=bottom, 270°=left (clockwise from top), matching the compass feel of the slider
+  const lightRad = (lightDirectionDeg - 90) * Math.PI / 180;
+  const lightVec = { x: Math.cos(lightRad), y: Math.sin(lightRad) };
   const warpAmt = parseInt(warpSlider.value, 10) / 100 * 18;
   const imperfAmt = parseInt(imperfectionSlider.value, 10) / 100 * mesh * 0.3;
   const density = parseInt(densitySlider.value, 10);
@@ -168,9 +206,7 @@ function render() {
   const tensionDepthMul = 1 + tensionFactor * 0.9;
   const backlightOn = backlightToggle.checked && hasC;
   const lightIntensity = parseInt(lightIntensitySlider.value, 10) / 100;
-
-  const filterA = photoFilter(parseInt(exposureASlider.value, 10), parseInt(brillianceASlider.value, 10));
-  const filterB = photoFilter(parseInt(exposureBSlider.value, 10), parseInt(brillianceBSlider.value, 10));
+  const grainAmt = parseInt(grainSlider.value, 10) / 100;
 
   if (backlightOn) {
     ctx.save();
@@ -180,7 +216,8 @@ function render() {
   }
 
   if (currentDirection === 'diagonal') {
-    renderDiagonalWeave({ mesh, zoomFactor, strandLength, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
+    renderDiagonalWeave({ mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB });
+    applyGrain(grainAmt);
     return;
   }
 
@@ -251,67 +288,96 @@ function render() {
           gw0 = Math.min(strandLength * mesh, w - gx0);
           gh0 = Math.min(strandLength * mesh, h - gy0);
         }
-        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, depthAmt, shadowReach, tensionDepthMul);
+        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
       }
     }
   }
+
+  applyGrain(grainAmt);
 }
 
-// Simulates the small pooled shadow / raised-edge highlight where one strand
-// crosses under/over another in a real basket weave — concentrated right at the
-// shape's own boundary edges (the seam with its neighbor), fading inward.
-// Drawn as 4 edge-hugging gradient strips rather than one circular radial
-// gradient, so it reads as a clean border hugging the actual rectangle instead
-// of a round spotlight sitting in the middle of the tile.
-function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul) {
-  const peak = Math.max(0, Math.min(0.5, (useA ? 0.16 : 0.22) * depthAmt * tensionDepthMul));
-  if (peak <= 0.002) return;
+// Film-grain-style noise overlay — a per-pixel random luminance texture blended
+// with 'overlay', giving the surface some tactile, non-digital grit instead of
+// a flat, overly clean composite. Regenerated fresh each render (no caching)
+// since GRAIN is usually adjusted interactively at low-to-moderate canvas sizes.
+function applyGrain(amt) {
+  if (amt <= 0.003) return;
+  const w = outputCanvas.width, h = outputCanvas.height;
+  const off = document.createElement('canvas');
+  off.width = w; off.height = h;
+  const octx = off.getContext('2d');
+  const imgData = octx.createImageData(w, h);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const n = (Math.random() * 255) | 0;
+    data[i] = n; data[i + 1] = n; data[i + 2] = n; data[i + 3] = 255;
+  }
+  octx.putImageData(imgData, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, amt * 0.55);
+  ctx.globalCompositeOperation = 'overlay';
+  ctx.drawImage(off, 0, 0);
+  ctx.restore();
+}
+
+// Simulates the raised/lowered relief of a woven strand catching light from one
+// direction — like the reference macro photos, where ridges facing the light
+// catch a bright edge and the opposite side falls into shadow, all in the SAME
+// direction across the whole piece (not just "A is always lit, B always dark").
+// lightVec is a unit vector pointing toward the light source; useA still adds a
+// small over/under bias on top of that shared directional lighting.
+function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
+  const peakBase = Math.max(0, Math.min(0.5, 0.19 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
+  if (peakBase <= 0.002) return;
   const reach = Math.max(1, Math.min(w, h) * 0.5 * Math.max(0.04, shadowReach));
-  const color = useA ? '255,246,225' : '0,0,0';
 
-  let g = ctx.createLinearGradient(0, y, 0, y + reach);
-  g.addColorStop(0, `rgba(${color},${peak})`);
-  g.addColorStop(1, `rgba(${color},0)`);
-  ctx.fillStyle = g; ctx.fillRect(x, y, w, reach);
+  function edgeGlow(nx, ny, gx0, gy0, gx1, gy1, rx, ry, rw, rh) {
+    const lit = nx * lightVec.x + ny * lightVec.y; // -1..1, >0 = facing the light
+    const alpha = peakBase * Math.abs(lit);
+    if (alpha <= 0.002) return;
+    const color = lit > 0 ? '255,248,232' : '0,0,0';
+    const g = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+    g.addColorStop(0, `rgba(${color},${alpha})`);
+    g.addColorStop(1, `rgba(${color},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(rx, ry, rw, rh);
+  }
 
-  g = ctx.createLinearGradient(0, y + h, 0, y + h - reach);
-  g.addColorStop(0, `rgba(${color},${peak})`);
-  g.addColorStop(1, `rgba(${color},0)`);
-  ctx.fillStyle = g; ctx.fillRect(x, y + h - reach, w, reach);
-
-  g = ctx.createLinearGradient(x, 0, x + reach, 0);
-  g.addColorStop(0, `rgba(${color},${peak})`);
-  g.addColorStop(1, `rgba(${color},0)`);
-  ctx.fillStyle = g; ctx.fillRect(x, y, reach, h);
-
-  g = ctx.createLinearGradient(x + w, 0, x + w - reach, 0);
-  g.addColorStop(0, `rgba(${color},${peak})`);
-  g.addColorStop(1, `rgba(${color},0)`);
-  ctx.fillStyle = g; ctx.fillRect(x + w - reach, y, reach, h);
+  edgeGlow(0, -1, 0, y, 0, y + reach, x, y, w, reach);
+  edgeGlow(0, 1, 0, y + h, 0, y + h - reach, x, y + h - reach, w, reach);
+  edgeGlow(-1, 0, x, 0, x + reach, 0, x, y, reach, h);
+  edgeGlow(1, 0, x + w, 0, x + w - reach, 0, x + w - reach, y, reach, h);
 }
 
 // Same idea as applyEdgeGlow but for an arbitrary quadrilateral (the rotated
-// diamond groups in DIAGONAL mode) — walks each of the 4 edges and draws a
-// gradient strip extruded inward along that edge's own inward normal.
-function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepthMul) {
-  const peak = Math.max(0, Math.min(0.5, (useA ? 0.16 : 0.22) * depthAmt * tensionDepthMul));
-  if (peak <= 0.002) return;
+// diamond groups in DIAGONAL mode) — walks each edge and lights/shadows it
+// based on how directly its own outward normal faces the light source.
+function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
+  const peakBase = Math.max(0, Math.min(0.5, 0.19 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
+  if (peakBase <= 0.002) return;
   const centroid = corners.reduce((a, c) => [a[0] + c[0] / corners.length, a[1] + c[1] / corners.length], [0, 0]);
   const edgeLen = Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
   const reach = Math.max(1, edgeLen * 0.5 * Math.max(0.04, shadowReach));
-  const color = useA ? '255,246,225' : '0,0,0';
 
   for (let i = 0; i < corners.length; i++) {
     const a = corners[i], b = corners[(i + 1) % corners.length];
     const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
-    let nx = mx - centroid[0], ny = my - centroid[1];
+    let nx = mx - centroid[0], ny = my - centroid[1]; // outward normal for this edge
     const nlen = Math.hypot(nx, ny) || 1;
-    nx /= nlen; ny /= nlen; // inward-pointing unit normal for this edge
-    const a2 = [a[0] - nx * reach, a[1] - ny * reach];
-    const b2 = [b[0] - nx * reach, b[1] - ny * reach];
+    nx /= nlen; ny /= nlen;
 
-    const g = ctx.createLinearGradient(mx, my, mx - nx * reach, my - ny * reach);
-    g.addColorStop(0, `rgba(${color},${peak})`);
+    const lit = nx * lightVec.x + ny * lightVec.y;
+    const alpha = peakBase * Math.abs(lit);
+    if (alpha <= 0.002) continue;
+    const color = lit > 0 ? '255,248,232' : '0,0,0';
+
+    // inward-pointing strip for the shadow/highlight to fade across
+    const ix = -nx, iy = -ny;
+    const a2 = [a[0] + ix * reach, a[1] + iy * reach];
+    const b2 = [b[0] + ix * reach, b[1] + iy * reach];
+
+    const g = ctx.createLinearGradient(mx, my, mx + ix * reach, my + iy * reach);
+    g.addColorStop(0, `rgba(${color},${alpha})`);
     g.addColorStop(1, `rgba(${color},0)`);
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -329,7 +395,7 @@ function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepth
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
 function renderDiagonalWeave(p) {
-  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
+  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
   const cx = w / 2, cy = h / 2;
   const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2; // 45°
@@ -427,14 +493,14 @@ function renderDiagonalWeave(p) {
         for (let i = 1; i < groupCorners.length; i++) ctx.lineTo(groupCorners[i][0], groupCorners[i][1]);
         ctx.closePath();
         ctx.clip();
-        applyPolygonEdgeGlow(groupCorners, useA, depthAmt, shadowReach, tensionDepthMul);
+        applyPolygonEdgeGlow(groupCorners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
         ctx.restore();
       }
     }
   }
 }
 
-[meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
+[meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightDirectionSlider, grainSlider, lightIntensitySlider,
  exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
   el.addEventListener('input', () => {
     meshVal.textContent = meshSlider.value;
@@ -445,6 +511,8 @@ function renderDiagonalWeave(p) {
     tensionVal.textContent = tensionSlider.value + '%';
     depthAmtVal.textContent = depthAmtSlider.value + '%';
     shadowReachVal.textContent = shadowReachSlider.value + '%';
+    lightDirectionVal.textContent = lightDirectionSlider.value + '°';
+    grainVal.textContent = grainSlider.value + '%';
     lightIntensityVal.textContent = lightIntensitySlider.value + '%';
     exposureAVal.textContent = exposureASlider.value;
     brillianceAVal.textContent = brillianceASlider.value;
@@ -457,6 +525,7 @@ backlightToggle.addEventListener('change', render);
 
 resetBtn.addEventListener('click', () => {
   meshSlider.value = 40; strandLengthSlider.value = 2; depthAmtSlider.value = 60; shadowReachSlider.value = 40; warpSlider.value = 0;
+  lightDirectionSlider.value = 45; grainSlider.value = 0;
   imperfectionSlider.value = 15; densitySlider.value = 50; tensionSlider.value = 50;
   backlightToggle.checked = false; lightIntensitySlider.value = 50;
   zoomWithMeshToggle.checked = false;
@@ -465,7 +534,7 @@ resetBtn.addEventListener('click', () => {
   directionBtns.forEach(b => b.classList.remove('active'));
   document.querySelector('[data-direction="basket"]').classList.add('active');
   currentDirection = 'basket';
-  [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightIntensitySlider,
+  [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightDirectionSlider, grainSlider, lightIntensitySlider,
    exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider]
     .forEach(el => el.dispatchEvent(new Event('input')));
   render();
