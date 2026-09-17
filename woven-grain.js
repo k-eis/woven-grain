@@ -244,20 +244,34 @@ function render() {
       const cw = Math.min(mesh, w - gx);
       const ch = Math.min(mesh, h - gy);
 
-      const srcImg = useA ? imgA : imgB;
-      const ir = srcImg.naturalWidth / srcImg.naturalHeight;
-      const cr = w / h;
-      const baseScale = ir > cr ? srcImg.naturalHeight / h : srcImg.naturalWidth / w;
-      const scale = baseScale * zoomFactor;
-      const offX = (srcImg.naturalWidth - w * scale) / 2;
-      const offY = (srcImg.naturalHeight - h * scale) / 2;
-
       const warpX = warpAmt * Math.sin(gy * 0.05 + col);
       const warpY = warpAmt * Math.sin(gx * 0.05 + row);
-      const sx = offX + (gx + warpX) * scale;
-      const sy = offY + (gy + warpY) * scale;
-      const sw = cw * scale;
-      const sh = ch * scale;
+
+      // per-photo sample rect, independent of tension/imperfection sizing
+      function sampleFor(img) {
+        const ir = img.naturalWidth / img.naturalHeight;
+        const cr = w / h;
+        const baseScale = ir > cr ? img.naturalHeight / h : img.naturalWidth / w;
+        const scale = baseScale * zoomFactor;
+        const offX = (img.naturalWidth - w * scale) / 2;
+        const offY = (img.naturalHeight - h * scale) / 2;
+        return { sx: offX + (gx + warpX) * scale, sy: offY + (gy + warpY) * scale, sw: cw * scale, sh: ch * scale };
+      }
+
+      const srcImg = useA ? imgA : imgB;
+
+      // BACKDROP: always paint the crossing photo at the cell's full, un-shrunk grid
+      // rect first — this guarantees a loose TENSION never exposes empty canvas, since
+      // whatever gap opens up around the foreground reveals the crossing strand
+      // underneath, exactly like a real weave loosening to show more of what it crosses.
+      const backdropImg = useA ? imgB : imgA;
+      const bg = sampleFor(backdropImg);
+      ctx.filter = useA ? filterB : filterA;
+      ctx.drawImage(backdropImg, bg.sx, bg.sy, bg.sw, bg.sh, gx, gy, cw, ch);
+      ctx.filter = 'none';
+
+      const fg = sampleFor(srcImg);
+      const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
 
       const jx = (seededRandom(row, col, 1) - 0.5) * 2 * imperfAmt;
       const jy = (seededRandom(row, col, 2) - 0.5) * 2 * imperfAmt;
@@ -435,32 +449,66 @@ function renderDiagonalWeave(p) {
       // jittering each corner individually (uneven hand-woven edges) and TENSION
       // scaling the whole diamond from its centroid (tight = overlapping/sealed, loose = gaps)
       const cornersUV = [[u0, v0], [u0 + mesh, v0], [u0 + mesh, v0 + mesh], [u0, v0 + mesh]];
-      let cornersXY = cornersUV.map(([u, v], i) => {
+      const cornersXYBase = cornersUV.map(([u, v], i) => {
         const jx = (seededRandom(row, col, 10 + i) - 0.5) * 2 * imperfAmt;
         const jy = (seededRandom(row, col, 20 + i) - 0.5) * 2 * imperfAmt;
         return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
       });
-      const centroid = cornersXY.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
+      const centroid = cornersXYBase.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
       const tensionScale = 1 + tensionFactor * 0.22;
-      cornersXY = cornersXY.map(([x, y]) => [
+      const cornersXY = cornersXYBase.map(([x, y]) => [
         centroid[0] + (x - centroid[0]) * tensionScale,
         centroid[1] + (y - centroid[1]) * tensionScale
       ]);
 
-      const xs = cornersXY.map(c => c[0]), ys = cornersXY.map(c => c[1]);
-      const bx = Math.max(0, Math.min(w, Math.min(...xs)));
-      const by = Math.max(0, Math.min(h, Math.min(...ys)));
-      const bxMax = Math.max(0, Math.min(w, Math.max(...xs)));
-      const byMax = Math.max(0, Math.min(h, Math.max(...ys)));
-      const bw = bxMax - bx, bh = byMax - by;
-      if (bw <= 0 || bh <= 0) continue; // diamond entirely off-canvas, skip
+      function boundsOf(corners) {
+        const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+        const bx = Math.max(0, Math.min(w, Math.min(...xs)));
+        const by = Math.max(0, Math.min(h, Math.min(...ys)));
+        const bxMax = Math.max(0, Math.min(w, Math.max(...xs)));
+        const byMax = Math.max(0, Math.min(h, Math.max(...ys)));
+        return { bx, by, bw: bxMax - bx, bh: byMax - by };
+      }
 
-      const map = useA ? mapA : mapB;
+      const baseB = boundsOf(cornersXYBase);
+      if (baseB.bw <= 0 || baseB.bh <= 0) continue; // diamond entirely off-canvas, skip
+
       const centerWarpX = warpAmt * Math.sin(centroid[1] * 0.05 + col);
       const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
-      const sx = map.offX + (bx + centerWarpX) * map.scale;
-      const sy = map.offY + (by + centerWarpY) * map.scale;
-      const sw = bw * map.scale, sh = bh * map.scale;
+
+      function sampleFor(map, bx, by, bw, bh) {
+        return {
+          sx: map.offX + (bx + centerWarpX) * map.scale,
+          sy: map.offY + (by + centerWarpY) * map.scale,
+          sw: bw * map.scale, sh: bh * map.scale
+        };
+      }
+
+      // BACKDROP: paint the crossing photo across the diamond's FULL (pre-tension)
+      // footprint first, so a loose TENSION shrinking the foreground diamond never
+      // exposes empty canvas — the gap simply reveals the crossing strand, same
+      // fix as the axis-aligned modes above.
+      const backdropImg = useA ? imgB : imgA;
+      const backdropMap = useA ? mapB : mapA;
+      const bg = sampleFor(backdropMap, baseB.bx, baseB.by, baseB.bw, baseB.bh);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cornersXYBase[0][0], cornersXYBase[0][1]);
+      for (let i = 1; i < cornersXYBase.length; i++) ctx.lineTo(cornersXYBase[i][0], cornersXYBase[i][1]);
+      ctx.closePath();
+      ctx.clip();
+      ctx.filter = useA ? filterB : filterA;
+      ctx.drawImage(backdropImg, bg.sx, bg.sy, bg.sw, bg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
+      ctx.filter = 'none';
+      ctx.restore();
+
+      const fgBounds = boundsOf(cornersXY);
+      const { bx, by, bw, bh } = fgBounds;
+      if (bw <= 0 || bh <= 0) continue;
+
+      const map = useA ? mapA : mapB;
+      const fg = sampleFor(map, bx, by, bw, bh);
+      const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
 
       ctx.save();
       ctx.beginPath();
