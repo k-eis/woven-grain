@@ -220,6 +220,12 @@ function render() {
     ctx.filter = `brightness(${0.6 + lightIntensity * 1.1})`;
     drawCover(imgC, w, h);
     ctx.restore();
+  } else {
+    // no Photo C loaded — gaps from a loose TENSION should reveal plain black,
+    // not the app's transparent canvas background (which would export as a hole
+    // in the saved PNG). Filled explicitly here so it's part of the actual pixels.
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
   }
 
   if (currentDirection === 'diagonal') {
@@ -266,17 +272,6 @@ function render() {
       }
 
       const srcImg = useA ? imgA : imgB;
-
-      // BACKDROP: always paint the crossing photo at the cell's full, un-shrunk grid
-      // rect first — this guarantees a loose TENSION never exposes empty canvas, since
-      // whatever gap opens up around the foreground reveals the crossing strand
-      // underneath, exactly like a real weave loosening to show more of what it crosses.
-      const backdropImg = useA ? imgB : imgA;
-      const bg = sampleFor(backdropImg);
-      ctx.filter = useA ? filterB : filterA;
-      ctx.drawImage(backdropImg, bg.sx, bg.sy, bg.sw, bg.sh, gx, gy, cw, ch);
-      ctx.filter = 'none';
-
       const fg = sampleFor(srcImg);
       const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
 
@@ -348,7 +343,7 @@ function applyGrain(amt) {
 // lightVec is a unit vector pointing toward the light source; useA still adds a
 // small over/under bias on top of that shared directional lighting.
 function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
-  const peakBase = Math.max(0, Math.min(0.5, 0.19 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
+  const peakBase = Math.max(0, Math.min(0.5, 0.27 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
   if (peakBase <= 0.002) return;
   const reach = Math.max(1, Math.min(w, h) * 0.5 * Math.max(0.04, shadowReach));
 
@@ -374,7 +369,7 @@ function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul,
 // diamond groups in DIAGONAL mode) — walks each edge and lights/shadows it
 // based on how directly its own outward normal faces the light source.
 function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
-  const peakBase = Math.max(0, Math.min(0.5, 0.19 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
+  const peakBase = Math.max(0, Math.min(0.5, 0.27 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
   if (peakBase <= 0.002) return;
   const centroid = corners.reduce((a, c) => [a[0] + c[0] / corners.length, a[1] + c[1] / corners.length], [0, 0]);
   const edgeLen = Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
@@ -491,24 +486,6 @@ function renderDiagonalWeave(p) {
         };
       }
 
-      // BACKDROP: paint the crossing photo across the diamond's FULL (pre-tension)
-      // footprint first, so a loose TENSION shrinking the foreground diamond never
-      // exposes empty canvas — the gap simply reveals the crossing strand, same
-      // fix as the axis-aligned modes above.
-      const backdropImg = useA ? imgB : imgA;
-      const backdropMap = useA ? mapB : mapA;
-      const bg = sampleFor(backdropMap, baseB.bx, baseB.by, baseB.bw, baseB.bh);
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(cornersXYBase[0][0], cornersXYBase[0][1]);
-      for (let i = 1; i < cornersXYBase.length; i++) ctx.lineTo(cornersXYBase[i][0], cornersXYBase[i][1]);
-      ctx.closePath();
-      ctx.clip();
-      ctx.filter = useA ? filterB : filterA;
-      ctx.drawImage(backdropImg, bg.sx, bg.sy, bg.sw, bg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
-      ctx.filter = 'none';
-      ctx.restore();
-
       const fgBounds = boundsOf(cornersXY);
       const { bx, by, bw, bh } = fgBounds;
       if (bw <= 0 || bh <= 0) continue;
@@ -579,7 +556,7 @@ function renderDiagonalWeave(p) {
 backlightToggle.addEventListener('change', render);
 
 resetBtn.addEventListener('click', () => {
-  meshSlider.value = 40; strandLengthSlider.value = 2; depthAmtSlider.value = 60; shadowReachSlider.value = 40; warpSlider.value = 0;
+  meshSlider.value = 40; strandLengthSlider.value = 1; depthAmtSlider.value = 60; shadowReachSlider.value = 75; warpSlider.value = 0;
   lightDirectionSlider.value = 45; grainSlider.value = 0;
   imperfectionSlider.value = 15; densitySlider.value = 50; tensionSlider.value = 50;
   backlightToggle.checked = false; lightIntensitySlider.value = 50;
