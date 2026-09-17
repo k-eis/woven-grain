@@ -154,19 +154,26 @@ function drawCover(img, w, h, destCtx) {
 // woven output
 function updatePreviews(filterA, filterB) {
   if (hasA && previewA) {
-    previewA.width = previewA.clientWidth || 160;
-    previewA.height = previewA.clientHeight || 160;
+    const w = previewA.clientWidth || 160, h = previewA.clientHeight || 160;
+    // only reset the canvas backing store when the on-screen size actually changed —
+    // resizing every render() call forces a layout reflow each time, which is cheap
+    // on desktop but can visibly lag/stall on mobile hardware during slider drags
+    if (previewA.width !== w) previewA.width = w;
+    if (previewA.height !== h) previewA.height = h;
     const pctx = previewA.getContext('2d');
+    pctx.clearRect(0, 0, w, h);
     pctx.filter = filterA;
-    drawCover(imgA, previewA.width, previewA.height, pctx);
+    drawCover(imgA, w, h, pctx);
     pctx.filter = 'none';
   }
   if (hasB && previewB) {
-    previewB.width = previewB.clientWidth || 160;
-    previewB.height = previewB.clientHeight || 160;
+    const w = previewB.clientWidth || 160, h = previewB.clientHeight || 160;
+    if (previewB.width !== w) previewB.width = w;
+    if (previewB.height !== h) previewB.height = h;
     const pctx = previewB.getContext('2d');
+    pctx.clearRect(0, 0, w, h);
     pctx.filter = filterB;
-    drawCover(imgB, previewB.width, previewB.height, pctx);
+    drawCover(imgB, w, h, pctx);
     pctx.filter = 'none';
   }
 }
@@ -607,6 +614,14 @@ downloadBtn.addEventListener('click', () => {
 });
 document.getElementById('saveOverlayClose').addEventListener('click', () => {
   document.getElementById('saveOverlay').style.display = 'none';
+});
+
+// keeps the A/B previews correctly sized after an orientation change or window
+// resize, since updatePreviews() now only resizes them when the size differs
+let resizeDebounce;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeDebounce);
+  resizeDebounce = setTimeout(render, 150);
 });
 
 render();
