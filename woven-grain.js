@@ -285,9 +285,20 @@ function render() {
       const fw = jw + tensionSizeAdjust;
       const fh = jh + tensionSizeAdjust;
 
+      // Real woven strands aren't sharp-cornered tiles — they're rounded strips.
+      // Clipping each segment to a rounded rect (rather than a plain rect) is what
+      // turns a "mosaic of square photos" into something that actually reads as
+      // interlaced strands, especially once TENSION opens gaps between them.
+      const cornerR = Math.min(fw, fh) * 0.34;
+      ctx.save();
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, cornerR);
+      else ctx.rect(fx, fy, fw, fh); // fallback for very old browsers
+      ctx.clip();
       ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
       ctx.filter = 'none';
+      ctx.restore();
 
       // draw the strand-segment's shadow/highlight only ONCE per group, from its
       // top-left anchor cell — not once per constituent cell — so the four edge
@@ -304,7 +315,7 @@ function render() {
           gw0 = Math.min(strandLength * mesh, w - gx0);
           gh0 = Math.min(strandLength * mesh, h - gy0);
         }
-        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
+        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, depthAmt, shadowReach, tensionDepthMul, lightVec, Math.min(gw0, gh0) * 0.34);
       }
     }
   }
@@ -342,10 +353,18 @@ function applyGrain(amt) {
 // direction across the whole piece (not just "A is always lit, B always dark").
 // lightVec is a unit vector pointing toward the light source; useA still adds a
 // small over/under bias on top of that shared directional lighting.
-function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
+function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec, cornerR) {
   const peakBase = Math.max(0, Math.min(0.5, 0.27 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
   if (peakBase <= 0.002) return;
   const reach = Math.max(1, Math.min(w, h) * 0.5 * Math.max(0.04, shadowReach));
+
+  ctx.save();
+  if (cornerR) {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, cornerR);
+    else ctx.rect(x, y, w, h);
+    ctx.clip();
+  }
 
   function edgeGlow(nx, ny, gx0, gy0, gx1, gy1, rx, ry, rw, rh) {
     const lit = nx * lightVec.x + ny * lightVec.y; // -1..1, >0 = facing the light
@@ -363,6 +382,7 @@ function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul,
   edgeGlow(0, 1, 0, y + h, 0, y + h - reach, x, y + h - reach, w, reach);
   edgeGlow(-1, 0, x, 0, x + reach, 0, x, y, reach, h);
   edgeGlow(1, 0, x + w, 0, x + w - reach, 0, x + w - reach, y, reach, h);
+  ctx.restore();
 }
 
 // Same idea as applyEdgeGlow but for an arbitrary quadrilateral (the rotated
@@ -410,6 +430,28 @@ function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepth
 // boundary), this rotates the mesh grid itself by 45° so the bands genuinely cross
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
+// Traces a polygon's outline with each corner rounded off — used so the DIAGONAL
+// mode's diamonds read as rounded woven strips rather than sharp-edged tiles,
+// same rationale as the rounded rects in the axis-aligned modes.
+function roundedPolygonPath(corners, radius) {
+  const n = corners.length;
+  const edgeLen = Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
+  const r = Math.max(0, Math.min(radius, edgeLen * 0.42));
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const curr = corners[i];
+    const prev = corners[(i - 1 + n) % n];
+    const next = corners[(i + 1) % n];
+    const toPrevLen = Math.hypot(prev[0] - curr[0], prev[1] - curr[1]) || 1;
+    const toNextLen = Math.hypot(next[0] - curr[0], next[1] - curr[1]) || 1;
+    const p1 = [curr[0] + (prev[0] - curr[0]) / toPrevLen * r, curr[1] + (prev[1] - curr[1]) / toPrevLen * r];
+    const p2 = [curr[0] + (next[0] - curr[0]) / toNextLen * r, curr[1] + (next[1] - curr[1]) / toNextLen * r];
+    if (i === 0) ctx.moveTo(p1[0], p1[1]); else ctx.lineTo(p1[0], p1[1]);
+    ctx.quadraticCurveTo(curr[0], curr[1], p2[0], p2[1]);
+  }
+  ctx.closePath();
+}
+
 function renderDiagonalWeave(p) {
   const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
@@ -495,10 +537,7 @@ function renderDiagonalWeave(p) {
       const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
 
       ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(cornersXY[0][0], cornersXY[0][1]);
-      for (let i = 1; i < cornersXY.length; i++) ctx.lineTo(cornersXY[i][0], cornersXY[i][1]);
-      ctx.closePath();
+      roundedPolygonPath(cornersXY, Math.min(bw, bh) * 0.22);
       ctx.clip();
       ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(useA ? imgA : imgB, sx, sy, sw, sh, bx, by, bw, bh);
@@ -520,10 +559,7 @@ function renderDiagonalWeave(p) {
           gCentroid[1] + (y - gCentroid[1]) * tensionScale
         ]);
         ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(groupCorners[0][0], groupCorners[0][1]);
-        for (let i = 1; i < groupCorners.length; i++) ctx.lineTo(groupCorners[i][0], groupCorners[i][1]);
-        ctx.closePath();
+        roundedPolygonPath(groupCorners, gSize * 0.16);
         ctx.clip();
         applyPolygonEdgeGlow(groupCorners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
         ctx.restore();
