@@ -234,6 +234,46 @@ function render() {
     return;
   }
 
+  // ── PASS 1 (UNDER layer): every cell's crossing photo is drawn first, at its
+  // full, un-shrunk grid size. This guarantees the strand that's "under" at a
+  // given crossing is always fully present — TENSION never creates an actual
+  // gap/tear, only changes how much of it the "over" strand covers.
+  for (let gy = 0; gy < h; gy += mesh) {
+    for (let gx = 0; gx < w; gx += mesh) {
+      const col = Math.floor(gx / mesh);
+      const row = Math.floor(gy / mesh);
+      const gRow = Math.floor(row / strandLength);
+      const gCol = Math.floor(col / strandLength);
+      let baseUseA = currentDirection === 'stripe' ? col % 2 === 0 : (gRow + gCol) % 2 === 0;
+      let useA = baseUseA;
+      if (density > 50 && !baseUseA) { if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true; }
+      else if (density < 50 && baseUseA) { if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false; }
+
+      const cw = Math.min(mesh, w - gx);
+      const ch = Math.min(mesh, h - gy);
+      const warpX = warpAmt * Math.sin(gy * 0.05 + col);
+      const warpY = warpAmt * Math.sin(gx * 0.05 + row);
+      const underImg = useA ? imgB : imgA;
+      const ir = underImg.naturalWidth / underImg.naturalHeight;
+      const cr = w / h;
+      const baseScale = ir > cr ? underImg.naturalHeight / h : underImg.naturalWidth / w;
+      const scale = baseScale * zoomFactor;
+      const offX = (underImg.naturalWidth - w * scale) / 2;
+      const offY = (underImg.naturalHeight - h * scale) / 2;
+      const usx = offX + (gx + warpX) * scale, usy = offY + (gy + warpY) * scale;
+
+      ctx.filter = useA ? filterB : filterA;
+      ctx.drawImage(underImg, usx, usy, cw * scale, ch * scale, gx, gy, cw, ch);
+      ctx.filter = 'none';
+    }
+  }
+
+  // ── PASS 2 (OVER layer): the crossing-winning photo, sized to visibly overlap
+  // its own grid cell — a constant baseline overlap gives every crossing a real
+  // "folded over" edge even at neutral tension; TIGHT grows that overlap further,
+  // LOOSE shrinks it back (revealing more of the always-present under layer,
+  // never emptiness).
+  const baseOverlap = mesh * 0.16;
   for (let gy = 0; gy < h; gy += mesh) {
     for (let gx = 0; gx < w; gx += mesh) {
       const col = Math.floor(gx / mesh);
@@ -280,25 +320,15 @@ function render() {
       const jw = cw + (seededRandom(row, col, 3) - 0.5) * imperfAmt;
       const jh = ch + (seededRandom(row, col, 4) - 0.5) * imperfAmt;
 
-      const fx = gx + jx - tensionSizeAdjust / 2;
-      const fy = gy + jy - tensionSizeAdjust / 2;
-      const fw = jw + tensionSizeAdjust;
-      const fh = jh + tensionSizeAdjust;
+      const overlapAdjust = baseOverlap + tensionSizeAdjust;
+      const fx = gx + jx - overlapAdjust / 2;
+      const fy = gy + jy - overlapAdjust / 2;
+      const fw = jw + overlapAdjust;
+      const fh = jh + overlapAdjust;
 
-      // Real woven strands aren't sharp-cornered tiles — they're rounded strips.
-      // Clipping each segment to a rounded rect (rather than a plain rect) is what
-      // turns a "mosaic of square photos" into something that actually reads as
-      // interlaced strands, especially once TENSION opens gaps between them.
-      const cornerR = Math.min(fw, fh) * 0.34;
-      ctx.save();
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, cornerR);
-      else ctx.rect(fx, fy, fw, fh); // fallback for very old browsers
-      ctx.clip();
       ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
       ctx.filter = 'none';
-      ctx.restore();
 
       // draw the strand-segment's shadow/highlight only ONCE per group, from its
       // top-left anchor cell — not once per constituent cell — so the four edge
@@ -315,7 +345,7 @@ function render() {
           gw0 = Math.min(strandLength * mesh, w - gx0);
           gh0 = Math.min(strandLength * mesh, h - gy0);
         }
-        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, depthAmt, shadowReach, tensionDepthMul, lightVec, Math.min(gw0, gh0) * 0.34);
+        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
       }
     }
   }
@@ -353,18 +383,10 @@ function applyGrain(amt) {
 // direction across the whole piece (not just "A is always lit, B always dark").
 // lightVec is a unit vector pointing toward the light source; useA still adds a
 // small over/under bias on top of that shared directional lighting.
-function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec, cornerR) {
+function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
   const peakBase = Math.max(0, Math.min(0.5, 0.27 * depthAmt * tensionDepthMul * (useA ? 1.15 : 0.9)));
   if (peakBase <= 0.002) return;
   const reach = Math.max(1, Math.min(w, h) * 0.5 * Math.max(0.04, shadowReach));
-
-  ctx.save();
-  if (cornerR) {
-    ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x, y, w, h, cornerR);
-    else ctx.rect(x, y, w, h);
-    ctx.clip();
-  }
 
   function edgeGlow(nx, ny, gx0, gy0, gx1, gy1, rx, ry, rw, rh) {
     const lit = nx * lightVec.x + ny * lightVec.y; // -1..1, >0 = facing the light
@@ -382,7 +404,6 @@ function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul,
   edgeGlow(0, 1, 0, y + h, 0, y + h - reach, x, y + h - reach, w, reach);
   edgeGlow(-1, 0, x, 0, x + reach, 0, x, y, reach, h);
   edgeGlow(1, 0, x + w, 0, x + w - reach, 0, x + w - reach, y, reach, h);
-  ctx.restore();
 }
 
 // Same idea as applyEdgeGlow but for an arbitrary quadrilateral (the rotated
@@ -430,28 +451,6 @@ function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepth
 // boundary), this rotates the mesh grid itself by 45° so the bands genuinely cross
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
-// Traces a polygon's outline with each corner rounded off — used so the DIAGONAL
-// mode's diamonds read as rounded woven strips rather than sharp-edged tiles,
-// same rationale as the rounded rects in the axis-aligned modes.
-function roundedPolygonPath(corners, radius) {
-  const n = corners.length;
-  const edgeLen = Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
-  const r = Math.max(0, Math.min(radius, edgeLen * 0.42));
-  ctx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const curr = corners[i];
-    const prev = corners[(i - 1 + n) % n];
-    const next = corners[(i + 1) % n];
-    const toPrevLen = Math.hypot(prev[0] - curr[0], prev[1] - curr[1]) || 1;
-    const toNextLen = Math.hypot(next[0] - curr[0], next[1] - curr[1]) || 1;
-    const p1 = [curr[0] + (prev[0] - curr[0]) / toPrevLen * r, curr[1] + (prev[1] - curr[1]) / toPrevLen * r];
-    const p2 = [curr[0] + (next[0] - curr[0]) / toNextLen * r, curr[1] + (next[1] - curr[1]) / toNextLen * r];
-    if (i === 0) ctx.moveTo(p1[0], p1[1]); else ctx.lineTo(p1[0], p1[1]);
-    ctx.quadraticCurveTo(curr[0], curr[1], p2[0], p2[1]);
-  }
-  ctx.closePath();
-}
-
 function renderDiagonalWeave(p) {
   const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
@@ -474,6 +473,63 @@ function renderDiagonalWeave(p) {
   }
   const mapA = coverMap(imgA), mapB = coverMap(imgB);
 
+  function boundsOf(corners) {
+    const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+    const bx = Math.max(0, Math.min(w, Math.min(...xs)));
+    const by = Math.max(0, Math.min(h, Math.min(...ys)));
+    const bxMax = Math.max(0, Math.min(w, Math.max(...xs)));
+    const byMax = Math.max(0, Math.min(h, Math.max(...ys)));
+    return { bx, by, bw: bxMax - bx, bh: byMax - by };
+  }
+
+  // ── PASS 1 (UNDER layer): every diamond's crossing photo drawn first at its
+  // full, un-shrunk footprint — guarantees the strand that's "under" at a given
+  // crossing is always fully present, same rationale as the axis-aligned modes.
+  for (let row = -range; row <= range; row++) {
+    for (let col = -range; col <= range; col++) {
+      const u0 = row * mesh, v0 = col * mesh;
+      const gRow = Math.floor(row / strandLength);
+      const gCol = Math.floor(col / strandLength);
+      let baseUseA = (gRow + gCol) % 2 === 0;
+      let useA = baseUseA;
+      if (density > 50 && !baseUseA) { if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true; }
+      else if (density < 50 && baseUseA) { if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false; }
+
+      const cornersUV = [[u0, v0], [u0 + mesh, v0], [u0 + mesh, v0 + mesh], [u0, v0 + mesh]];
+      const cornersXYBase = cornersUV.map(([u, v], i) => {
+        const jx = (seededRandom(row, col, 10 + i) - 0.5) * 2 * imperfAmt;
+        const jy = (seededRandom(row, col, 20 + i) - 0.5) * 2 * imperfAmt;
+        return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
+      });
+      const centroid = cornersXYBase.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
+      const baseB = boundsOf(cornersXYBase);
+      if (baseB.bw <= 0 || baseB.bh <= 0) continue;
+
+      const centerWarpX = warpAmt * Math.sin(centroid[1] * 0.05 + col);
+      const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
+      const underMap = useA ? mapB : mapA;
+      const ubg = {
+        sx: underMap.offX + (baseB.bx + centerWarpX) * underMap.scale,
+        sy: underMap.offY + (baseB.by + centerWarpY) * underMap.scale,
+        sw: baseB.bw * underMap.scale, sh: baseB.bh * underMap.scale
+      };
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cornersXYBase[0][0], cornersXYBase[0][1]);
+      for (let i = 1; i < cornersXYBase.length; i++) ctx.lineTo(cornersXYBase[i][0], cornersXYBase[i][1]);
+      ctx.closePath();
+      ctx.clip();
+      ctx.filter = useA ? filterB : filterA;
+      ctx.drawImage(useA ? imgB : imgA, ubg.sx, ubg.sy, ubg.sw, ubg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
+      ctx.filter = 'none';
+      ctx.restore();
+    }
+  }
+
+  // ── PASS 2 (OVER layer): the crossing-winning photo, its diamond scaled up
+  // from a constant baseline (a real fold-over edge even at neutral tension) —
+  // TIGHT grows the overlap further, LOOSE shrinks it back toward (never past)
+  // the base diamond, always revealing the always-present under layer beneath.
   for (let row = -range; row <= range; row++) {
     for (let col = -range; col <= range; col++) {
       const u0 = row * mesh, v0 = col * mesh;
@@ -499,20 +555,11 @@ function renderDiagonalWeave(p) {
         return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
       });
       const centroid = cornersXYBase.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
-      const tensionScale = 1 + tensionFactor * 0.22;
+      const tensionScale = 1.16 + tensionFactor * 0.22; // 1.16 baseline overlap at neutral tension
       const cornersXY = cornersXYBase.map(([x, y]) => [
         centroid[0] + (x - centroid[0]) * tensionScale,
         centroid[1] + (y - centroid[1]) * tensionScale
       ]);
-
-      function boundsOf(corners) {
-        const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
-        const bx = Math.max(0, Math.min(w, Math.min(...xs)));
-        const by = Math.max(0, Math.min(h, Math.min(...ys)));
-        const bxMax = Math.max(0, Math.min(w, Math.max(...xs)));
-        const byMax = Math.max(0, Math.min(h, Math.max(...ys)));
-        return { bx, by, bw: bxMax - bx, bh: byMax - by };
-      }
 
       const baseB = boundsOf(cornersXYBase);
       if (baseB.bw <= 0 || baseB.bh <= 0) continue; // diamond entirely off-canvas, skip
@@ -537,7 +584,10 @@ function renderDiagonalWeave(p) {
       const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
 
       ctx.save();
-      roundedPolygonPath(cornersXY, Math.min(bw, bh) * 0.22);
+      ctx.beginPath();
+      ctx.moveTo(cornersXY[0][0], cornersXY[0][1]);
+      for (let i = 1; i < cornersXY.length; i++) ctx.lineTo(cornersXY[i][0], cornersXY[i][1]);
+      ctx.closePath();
       ctx.clip();
       ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(useA ? imgA : imgB, sx, sy, sw, sh, bx, by, bw, bh);
@@ -559,7 +609,10 @@ function renderDiagonalWeave(p) {
           gCentroid[1] + (y - gCentroid[1]) * tensionScale
         ]);
         ctx.save();
-        roundedPolygonPath(groupCorners, gSize * 0.16);
+        ctx.beginPath();
+        ctx.moveTo(groupCorners[0][0], groupCorners[0][1]);
+        for (let i = 1; i < groupCorners.length; i++) ctx.lineTo(groupCorners[i][0], groupCorners[i][1]);
+        ctx.closePath();
         ctx.clip();
         applyPolygonEdgeGlow(groupCorners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
         ctx.restore();
