@@ -260,7 +260,15 @@ function render() {
   // perfectly tiled edge-to-edge. A perfectly tiled under layer was the bug:
   // it fully covered the canvas by itself, so black/Photo C could never show
   // through and loosening TENSION did nothing visible at all.
-  const underShrink = tensionFactor < 0 ? tensionFactor * mesh * 0.26 : 0; // only LOOSE tension pulls the under layer back too
+  // TENSION now drives the octagon corner-cut directly (see cornerCut below) —
+  // the under layer itself stays close to full size regardless of TENSION, so
+  // it isn't also compounding into oversized gaps.
+  const underShrink = 0;
+  // TENSION's single, bounded gap mechanism: at neutral/tight it's a small
+  // corner nick (cells read as almost-touching squares); toward LOOSE it grows
+  // into a visible diamond gap at the 4-way crossings — capped well short of
+  // swallowing the whole cell, so it never becomes a "grate" of mostly black.
+  const cornerCut = mesh * (0.05 + Math.max(0, -tensionFactor) * 0.24);
   for (let gy = 0; gy < h; gy += mesh) {
     for (let gx = 0; gx < w; gx += mesh) {
       const col = Math.floor(gx / mesh);
@@ -295,7 +303,7 @@ function render() {
       const ufy = gy + ujy - underShrink / 2;
 
       ctx.save();
-      octagonPath(ufx, ufy, ujw, ujh, mesh * 0.22);
+      octagonPath(ufx, ufy, ujw, ujh, cornerCut);
       ctx.clip();
       ctx.filter = useA ? filterB : filterA;
       ctx.drawImage(underImg, usx, usy, cw * scale, ch * scale, ufx, ufy, ujw, ujh);
@@ -304,11 +312,11 @@ function render() {
     }
   }
 
-  // ── PASS 2 (OVER layer): the crossing-winning photo, sized to visibly overlap
-  // its own grid cell — a constant baseline overlap gives every crossing a real
-  // "folded over" edge even at neutral tension; TIGHT grows that overlap further,
-  // LOOSE shrinks it back (revealing more of the under layer, and — once the
-  // under layer has pulled back too — genuine black/Photo C, like a real loose weave).
+  // ── PASS 2 (OVER layer): the crossing-winning photo. TIGHT tension grows a
+  // real overlap onto the neighbor (the "folded over" edge); LOOSE no longer
+  // shrinks this layer's own size — the visible gap at loose settings comes
+  // entirely from the octagon corner-cut above, kept to one bounded mechanism
+  // instead of several shrinks compounding into an oversized void.
   const baseOverlap = mesh * 0.12;
   for (let gy = 0; gy < h; gy += mesh) {
     for (let gx = 0; gx < w; gx += mesh) {
@@ -356,14 +364,14 @@ function render() {
       const jw = cw + (seededRandom(row, col, 3) - 0.5) * imperfAmt;
       const jh = ch + (seededRandom(row, col, 4) - 0.5) * imperfAmt;
 
-      const overlapAdjust = baseOverlap + tensionSizeAdjust;
+      const overlapAdjust = baseOverlap + Math.max(0, tensionFactor) * mesh * 0.30;
       const fx = gx + jx - overlapAdjust / 2;
       const fy = gy + jy - overlapAdjust / 2;
       const fw = jw + overlapAdjust;
       const fh = jh + overlapAdjust;
 
       ctx.save();
-      octagonPath(fx, fy, fw, fh, mesh * 0.22);
+      octagonPath(fx, fy, fw, fh, cornerCut);
       ctx.clip();
       ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
