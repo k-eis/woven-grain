@@ -178,6 +178,27 @@ function updatePreviews(filterA, filterB) {
   }
 }
 
+// Cuts the four corners of a rect off (an octagon rather than a rounded rect) —
+// unlike rounding, this keeps every edge razor-straight along its own length,
+// so neighboring cells still touch cleanly edge-to-edge. The gap this opens up
+// when TENSION loosens is then concentrated right at the 4-way crossing point
+// (a small diamond), matching how a real loose weave actually gaps — instead
+// of a uniform hairline gap running the full length of every edge, which is
+// what was reading as ruled "graph paper" rather than a woven surface.
+function octagonPath(x, y, w, h, cut) {
+  const c = Math.max(0, Math.min(cut, Math.min(w, h) / 2 - 0.5));
+  ctx.beginPath();
+  ctx.moveTo(x + c, y);
+  ctx.lineTo(x + w - c, y);
+  ctx.lineTo(x + w, y + c);
+  ctx.lineTo(x + w, y + h - c);
+  ctx.lineTo(x + w - c, y + h);
+  ctx.lineTo(x + c, y + h);
+  ctx.lineTo(x, y + h - c);
+  ctx.lineTo(x, y + c);
+  ctx.closePath();
+}
+
 function render() {
   const w = outputCanvas.width, h = outputCanvas.height;
   ctx.clearRect(0, 0, w, h);
@@ -273,9 +294,13 @@ function render() {
       const ufx = gx + ujx - underShrink / 2;
       const ufy = gy + ujy - underShrink / 2;
 
+      ctx.save();
+      octagonPath(ufx, ufy, ujw, ujh, mesh * 0.22);
+      ctx.clip();
       ctx.filter = useA ? filterB : filterA;
       ctx.drawImage(underImg, usx, usy, cw * scale, ch * scale, ufx, ufy, ujw, ujh);
       ctx.filter = 'none';
+      ctx.restore();
     }
   }
 
@@ -337,9 +362,13 @@ function render() {
       const fw = jw + overlapAdjust;
       const fh = jh + overlapAdjust;
 
+      ctx.save();
+      octagonPath(fx, fy, fw, fh, mesh * 0.22);
+      ctx.clip();
       ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
       ctx.filter = 'none';
+      ctx.restore();
 
       // draw the strand-segment's shadow/highlight only ONCE per group, from its
       // top-left anchor cell — not once per constituent cell — so the four edge
