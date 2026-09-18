@@ -209,7 +209,7 @@ function render() {
   const density = parseInt(densitySlider.value, 10);
   const tension = parseInt(tensionSlider.value, 10);
   const tensionFactor = (tension - 50) / 50;
-  const tensionSizeAdjust = tensionFactor * mesh * 0.15;
+  const tensionSizeAdjust = tensionFactor * mesh * 0.30;
   const tensionDepthMul = 1 + tensionFactor * 0.9;
   const backlightOn = backlightToggle.checked && hasC;
   const lightIntensity = parseInt(lightIntensitySlider.value, 10) / 100;
@@ -234,10 +234,12 @@ function render() {
     return;
   }
 
-  // ── PASS 1 (UNDER layer): every cell's crossing photo is drawn first, at its
-  // full, un-shrunk grid size. This guarantees the strand that's "under" at a
-  // given crossing is always fully present — TENSION never creates an actual
-  // gap/tear, only changes how much of it the "over" strand covers.
+  // ── PASS 1 (UNDER layer): every cell's crossing photo, drawn near its full
+  // grid size but with its own light jitter + partial TENSION response — NOT
+  // perfectly tiled edge-to-edge. A perfectly tiled under layer was the bug:
+  // it fully covered the canvas by itself, so black/Photo C could never show
+  // through and loosening TENSION did nothing visible at all.
+  const underShrink = tensionFactor < 0 ? tensionFactor * mesh * 0.26 : 0; // only LOOSE tension pulls the under layer back too
   for (let gy = 0; gy < h; gy += mesh) {
     for (let gx = 0; gx < w; gx += mesh) {
       const col = Math.floor(gx / mesh);
@@ -262,8 +264,17 @@ function render() {
       const offY = (underImg.naturalHeight - h * scale) / 2;
       const usx = offX + (gx + warpX) * scale, usy = offY + (gy + warpY) * scale;
 
+      // own jitter (different salt from the OVER pass) so the two layers don't
+      // move in lockstep — that's what actually opens small, organic gaps
+      const ujx = (seededRandom(row, col, 31) - 0.5) * 2 * imperfAmt;
+      const ujy = (seededRandom(row, col, 32) - 0.5) * 2 * imperfAmt;
+      const ujw = cw + (seededRandom(row, col, 33) - 0.5) * imperfAmt + underShrink;
+      const ujh = ch + (seededRandom(row, col, 34) - 0.5) * imperfAmt + underShrink;
+      const ufx = gx + ujx - underShrink / 2;
+      const ufy = gy + ujy - underShrink / 2;
+
       ctx.filter = useA ? filterB : filterA;
-      ctx.drawImage(underImg, usx, usy, cw * scale, ch * scale, gx, gy, cw, ch);
+      ctx.drawImage(underImg, usx, usy, cw * scale, ch * scale, ufx, ufy, ujw, ujh);
       ctx.filter = 'none';
     }
   }
@@ -271,9 +282,9 @@ function render() {
   // ── PASS 2 (OVER layer): the crossing-winning photo, sized to visibly overlap
   // its own grid cell — a constant baseline overlap gives every crossing a real
   // "folded over" edge even at neutral tension; TIGHT grows that overlap further,
-  // LOOSE shrinks it back (revealing more of the always-present under layer,
-  // never emptiness).
-  const baseOverlap = mesh * 0.16;
+  // LOOSE shrinks it back (revealing more of the under layer, and — once the
+  // under layer has pulled back too — genuine black/Photo C, like a real loose weave).
+  const baseOverlap = mesh * 0.12;
   for (let gy = 0; gy < h; gy += mesh) {
     for (let gx = 0; gx < w; gx += mesh) {
       const col = Math.floor(gx / mesh);
