@@ -152,6 +152,15 @@ function drawCover(img, w, h, destCtx) {
 // keeps the Photo A/B dropzone thumbnails in sync with their own EXPOSURE/BRILLIANCE —
 // so adjusting a photo's sliders visibly changes that photo's own preview, not just the
 // woven output
+// Safari has a known bug where a canvas's pixels update correctly but the
+// compositor doesn't visually repaint it after only ctx.filter + drawImage —
+// nudging opacity forces a recomposite. Harmless no-op on browsers that don't
+// need it.
+function nudgeRepaint(el) {
+  el.style.opacity = '0.9999';
+  requestAnimationFrame(() => { el.style.opacity = '1'; });
+}
+
 function updatePreviews(filterA, filterB) {
   if (hasA && previewA) {
     const w = previewA.clientWidth || 160, h = previewA.clientHeight || 160;
@@ -165,6 +174,7 @@ function updatePreviews(filterA, filterB) {
     pctx.filter = filterA;
     drawCover(imgA, w, h, pctx);
     pctx.filter = 'none';
+    nudgeRepaint(previewA);
   }
   if (hasB && previewB) {
     const w = previewB.clientWidth || 160, h = previewB.clientHeight || 160;
@@ -175,6 +185,7 @@ function updatePreviews(filterA, filterB) {
     pctx.filter = filterB;
     drawCover(imgB, w, h, pctx);
     pctx.filter = 'none';
+    nudgeRepaint(previewB);
   }
 }
 
