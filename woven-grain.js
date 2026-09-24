@@ -251,6 +251,33 @@ function sampleOutputSpace(gx, gy, cw, ch, warpX, warpY, zoomFactor, w, h) {
   return { sx, sy, sw: cw * zoomFactor, sh: ch * zoomFactor };
 }
 
+// Safari/iOS can behave badly when drawImage() receives a source rectangle
+// that extends outside a canvas. DIAGONAL reaches beyond the source edges by
+// design (the rotated diamonds at the four corners), so clamp the source rect
+// and keep the destination rect geometrically aligned.
+function drawClampedSource(source, sx, sy, sw, sh, dx, dy, dw, dh) {
+  const srcW = Number(source.width) || 0;
+  const srcH = Number(source.height) || 0;
+  if (!srcW || !srcH || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+
+  const x0 = Math.max(0, sx);
+  const y0 = Math.max(0, sy);
+  const x1 = Math.min(srcW, sx + sw);
+  const y1 = Math.min(srcH, sy + sh);
+  if (x1 <= x0 || y1 <= y0) return;
+
+  const rx0 = (x0 - sx) / sw;
+  const ry0 = (y0 - sy) / sh;
+  const rx1 = (x1 - sx) / sw;
+  const ry1 = (y1 - sy) / sh;
+  const ddx = dx + dw * rx0;
+  const ddy = dy + dh * ry0;
+  const ddw = dw * (rx1 - rx0);
+  const ddh = dh * (ry1 - ry0);
+  if (ddw <= 0 || ddh <= 0) return;
+  ctx.drawImage(source, x0, y0, x1 - x0, y1 - y0, ddx, ddy, ddw, ddh);
+}
+
 function wireDrop(dropId, fileId, img, onLoaded, useBackgroundImage) {
   const drop = document.getElementById(dropId);
   const file = document.getElementById(fileId);
@@ -543,7 +570,7 @@ function render() {
       ctx.save();
       octagonPath(ufx, ufy, ujw, ujh, cornerCut);
       ctx.clip();
-      ctx.drawImage(underImg, usx, usy, underSample.sw, underSample.sh, ufx, ufy, ujw, ujh);
+      drawClampedSource(underImg, usx, usy, underSample.sw, underSample.sh, ufx, ufy, ujw, ujh);
       ctx.restore();
     }
   }
@@ -604,7 +631,7 @@ function render() {
       ctx.save();
       octagonPath(fx, fy, fw, fh, cornerCut);
       ctx.clip();
-      ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
+      drawClampedSource(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
       ctx.restore();
 
       // draw the strand-segment's shadow/highlight only ONCE per group, from its
@@ -793,7 +820,7 @@ function renderDiagonalWeave(p) {
       for (let i = 1; i < cornersXYBase.length; i++) ctx.lineTo(cornersXYBase[i][0], cornersXYBase[i][1]);
       ctx.closePath();
       ctx.clip();
-      ctx.drawImage(underMap.source, ubg.sx, ubg.sy, ubg.sw, ubg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
+      drawClampedSource(underMap.source, ubg.sx, ubg.sy, ubg.sw, ubg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
       ctx.restore();
     }
   }
@@ -862,7 +889,7 @@ function renderDiagonalWeave(p) {
       for (let i = 1; i < cornersXY.length; i++) ctx.lineTo(cornersXY[i][0], cornersXY[i][1]);
       ctx.closePath();
       ctx.clip();
-      ctx.drawImage(map.source, sx, sy, sw, sh, bx, by, bw, bh);
+      drawClampedSource(map.source, sx, sy, sw, sh, bx, by, bw, bh);
       ctx.restore();
 
       // group-level shadow: drawn once per group (from its anchor diamond), clipped
