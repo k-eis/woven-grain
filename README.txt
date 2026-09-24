@@ -1,3 +1,5 @@
-Woven Grain Pro α7
+Woven Grain Pro α8
 
-Fix: after the first PLAY WEAVE animation, changing Photo A/B exposure/brilliance or other parameters is now a live edit and does not restart the animation. PLAY WEAVE is only used when the user explicitly presses it (or when a new composition is started).
+Mobile/iOS fix: Photo A / Photo B EXPOSURE and BRILLIANCE now affect the woven preview without relying on CanvasRenderingContext2D.filter, which is not supported by Safari/iOS. Filtered output-sized source canvases are cached and reused during rendering. The small A/B thumbnails use CSS filters as well.
+
+The first PLAY WEAVE animation behavior remains unchanged: after the first animation, parameters can be adjusted freely without replaying the animation.

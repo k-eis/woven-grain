@@ -189,6 +189,68 @@ if (playOverlayBtn) playOverlayBtn.addEventListener('click', playWeaveAnimation)
 const previewA = document.getElementById('previewA');
 const previewB = document.getElementById('previewB');
 
+// iOS/Safari does not support CanvasRenderingContext2D.filter, so Photo A/B
+// adjustments must not rely on ctx.filter. We build small, output-sized filtered
+// source canvases once per slider value and reuse them for every weave cell.
+let filteredSourceA = null, filteredSourceB = null;
+let filteredKeyA = '', filteredKeyB = '';
+
+function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+function buildFilteredSource(img, exposureVal, brillianceVal, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const cctx = c.getContext('2d', { willReadFrequently: true });
+  // First make the same cover crop used by the app.
+  drawCover(img, w, h, cctx);
+  const imageData = cctx.getImageData(0, 0, w, h);
+  const d = imageData.data;
+  const brightness = 1 + exposureVal / 100;
+  const contrast = 1 + brillianceVal / 130;
+  const saturate = 1 + brillianceVal / 100;
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i] * brightness;
+    let g = d[i + 1] * brightness;
+    let b = d[i + 2] * brightness;
+    r = (r - 128) * contrast + 128;
+    g = (g - 128) * contrast + 128;
+    b = (b - 128) * contrast + 128;
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    r = lum + (r - lum) * saturate;
+    g = lum + (g - lum) * saturate;
+    b = lum + (b - lum) * saturate;
+    d[i] = clamp255(r);
+    d[i + 1] = clamp255(g);
+    d[i + 2] = clamp255(b);
+  }
+  cctx.putImageData(imageData, 0, 0);
+  return c;
+}
+
+function getFilteredSources(w, h) {
+  const aExp = parseInt(exposureASlider.value, 10);
+  const aBri = parseInt(brillianceASlider.value, 10);
+  const bExp = parseInt(exposureBSlider.value, 10);
+  const bBri = parseInt(brillianceBSlider.value, 10);
+  const keyA = `${aExp}/${aBri}/${w}/${h}`;
+  const keyB = `${bExp}/${bBri}/${w}/${h}`;
+  if (!filteredSourceA || filteredKeyA !== keyA) {
+    filteredSourceA = buildFilteredSource(imgA, aExp, aBri, w, h);
+    filteredKeyA = keyA;
+  }
+  if (!filteredSourceB || filteredKeyB !== keyB) {
+    filteredSourceB = buildFilteredSource(imgB, bExp, bBri, w, h);
+    filteredKeyB = keyB;
+  }
+  return { A: filteredSourceA, B: filteredSourceB };
+}
+
+function sampleOutputSpace(gx, gy, cw, ch, warpX, warpY, zoomFactor, w, h) {
+  const sx = (gx + warpX - w / 2) * zoomFactor + w / 2;
+  const sy = (gy + warpY - h / 2) * zoomFactor + h / 2;
+  return { sx, sy, sw: cw * zoomFactor, sh: ch * zoomFactor };
+}
+
 function wireDrop(dropId, fileId, img, onLoaded, useBackgroundImage) {
   const drop = document.getElementById(dropId);
   const file = document.getElementById(fileId);
@@ -276,9 +338,9 @@ function updatePreviews(filterA, filterB) {
     if (previewA.height !== h) previewA.height = h;
     const pctx = previewA.getContext('2d');
     pctx.clearRect(0, 0, w, h);
-    pctx.filter = filterA;
     drawCover(imgA, w, h, pctx);
-    pctx.filter = 'none';
+    previewA.style.filter = filterA;
+    previewA.style.webkitFilter = filterA;
   }
   if (hasB && previewB) {
     const w = previewB.clientWidth || 160, h = previewB.clientHeight || 160;
@@ -286,9 +348,9 @@ function updatePreviews(filterA, filterB) {
     if (previewB.height !== h) previewB.height = h;
     const pctx = previewB.getContext('2d');
     pctx.clearRect(0, 0, w, h);
-    pctx.filter = filterB;
     drawCover(imgB, w, h, pctx);
-    pctx.filter = 'none';
+    previewB.style.filter = filterB;
+    previewB.style.webkitFilter = filterB;
   }
 }
 
@@ -339,6 +401,10 @@ function render() {
   if (playOverlayBtn) playOverlayBtn.style.display = 'none';
   downloadBtn.disabled = false;
 
+  const filteredSources = getFilteredSources(w, h);
+  const sourceA = filteredSources.A;
+  const sourceB = filteredSources.B;
+
   const mesh = parseInt(meshSlider.value, 10);
   const zoomWithMesh = zoomWithMeshToggle.checked;
   const zoomFactor = zoomWithMesh ? Math.max(1, mesh / 40) : 1; // 既定はOFF：MESH SIZEを変えても写真サイズは変わらない
@@ -380,14 +446,12 @@ function render() {
     ctx.fillRect(0, 0, w, h);
     ctx.save();
     ctx.globalAlpha = ap < 0.12 ? ap / 0.12 : 1;
-    ctx.filter = filterA;
-    drawCover(imgA, w * 0.46, h);
+    drawCover(sourceA, w * 0.46, h);
     ctx.restore();
     ctx.save();
     ctx.globalAlpha = ap < 0.12 ? ap / 0.12 : 1;
     ctx.translate(w * 0.54, 0);
-    ctx.filter = filterB;
-    drawCover(imgB, w * 0.46, h);
+    drawCover(sourceB, w * 0.46, h);
     ctx.restore();
     if (ap >= 0.12) {
       ctx.save();
@@ -451,14 +515,9 @@ function render() {
       const ch = Math.min(mesh, h - gy);
       const warpX = warpAmt * Math.sin(gy * 0.05 + col);
       const warpY = warpAmt * Math.sin(gx * 0.05 + row);
-      const underImg = useA ? imgB : imgA;
-      const ir = underImg.naturalWidth / underImg.naturalHeight;
-      const cr = w / h;
-      const baseScale = ir > cr ? underImg.naturalHeight / h : underImg.naturalWidth / w;
-      const scale = baseScale * zoomFactor;
-      const offX = (underImg.naturalWidth - w * scale) / 2;
-      const offY = (underImg.naturalHeight - h * scale) / 2;
-      const usx = offX + (gx + warpX) * scale, usy = offY + (gy + warpY) * scale;
+      const underImg = useA ? sourceB : sourceA;
+      const underSample = sampleOutputSpace(gx, gy, cw, ch, warpX, warpY, zoomFactor, w, h);
+      const usx = underSample.sx, usy = underSample.sy;
 
       // own jitter (different salt from the OVER pass) so the two layers don't
       // move in lockstep — that's what actually opens small, organic gaps
@@ -472,9 +531,7 @@ function render() {
       ctx.save();
       octagonPath(ufx, ufy, ujw, ujh, cornerCut);
       ctx.clip();
-      ctx.filter = useA ? filterB : filterA;
-      ctx.drawImage(underImg, usx, usy, cw * scale, ch * scale, ufx, ufy, ujw, ujh);
-      ctx.filter = 'none';
+      ctx.drawImage(underImg, usx, usy, underSample.sw, underSample.sh, ufx, ufy, ujw, ujh);
       ctx.restore();
     }
   }
@@ -514,16 +571,10 @@ function render() {
 
       // per-photo sample rect, independent of tension/imperfection sizing
       function sampleFor(img) {
-        const ir = img.naturalWidth / img.naturalHeight;
-        const cr = w / h;
-        const baseScale = ir > cr ? img.naturalHeight / h : img.naturalWidth / w;
-        const scale = baseScale * zoomFactor;
-        const offX = (img.naturalWidth - w * scale) / 2;
-        const offY = (img.naturalHeight - h * scale) / 2;
-        return { sx: offX + (gx + warpX) * scale, sy: offY + (gy + warpY) * scale, sw: cw * scale, sh: ch * scale };
+        return sampleOutputSpace(gx, gy, cw, ch, warpX, warpY, zoomFactor, w, h);
       }
 
-      const srcImg = useA ? imgA : imgB;
+      const srcImg = useA ? sourceA : sourceB;
       const fg = sampleFor(srcImg);
       const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
 
@@ -541,9 +592,7 @@ function render() {
       ctx.save();
       octagonPath(fx, fy, fw, fh, cornerCut);
       ctx.clip();
-      ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
-      ctx.filter = 'none';
       ctx.restore();
 
       // draw the strand-segment's shadow/highlight only ONCE per group, from its
@@ -681,15 +730,9 @@ function renderDiagonalWeave(p) {
   // precompute cover-fit mapping (source <- canvas) once per photo, reused for every diamond's bounding box.
   // zoomFactor (tied to MESH SIZE) scales past the normal cover-fit baseline so a wider mesh reads as more zoomed-in.
   function coverMap(img) {
-    const ir = img.naturalWidth / img.naturalHeight;
-    const cr = w / h;
-    const baseScale = ir > cr ? img.naturalHeight / h : img.naturalWidth / w;
-    const scale = baseScale * zoomFactor;
-    const offX = (img.naturalWidth - w * scale) / 2;
-    const offY = (img.naturalHeight - h * scale) / 2;
-    return { scale, offX, offY };
+    return { source: img, scale: zoomFactor };
   }
-  const mapA = coverMap(imgA), mapB = coverMap(imgB);
+  const mapA = coverMap(sourceA), mapB = coverMap(sourceB);
 
   function boundsOf(corners) {
     const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
@@ -728,8 +771,8 @@ function renderDiagonalWeave(p) {
       const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
       const underMap = useA ? mapB : mapA;
       const ubg = {
-        sx: underMap.offX + (baseB.bx + centerWarpX) * underMap.scale,
-        sy: underMap.offY + (baseB.by + centerWarpY) * underMap.scale,
+        sx: (baseB.bx + centerWarpX - w / 2) * underMap.scale + w / 2,
+        sy: (baseB.by + centerWarpY - h / 2) * underMap.scale + h / 2,
         sw: baseB.bw * underMap.scale, sh: baseB.bh * underMap.scale
       };
       ctx.save();
@@ -738,9 +781,7 @@ function renderDiagonalWeave(p) {
       for (let i = 1; i < cornersXYBase.length; i++) ctx.lineTo(cornersXYBase[i][0], cornersXYBase[i][1]);
       ctx.closePath();
       ctx.clip();
-      ctx.filter = useA ? filterB : filterA;
-      ctx.drawImage(useA ? imgB : imgA, ubg.sx, ubg.sy, ubg.sw, ubg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
-      ctx.filter = 'none';
+      ctx.drawImage(underMap.source, ubg.sx, ubg.sy, ubg.sw, ubg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
       ctx.restore();
     }
   }
@@ -789,8 +830,8 @@ function renderDiagonalWeave(p) {
 
       function sampleFor(map, bx, by, bw, bh) {
         return {
-          sx: map.offX + (bx + centerWarpX) * map.scale,
-          sy: map.offY + (by + centerWarpY) * map.scale,
+          sx: (bx + centerWarpX - w / 2) * map.scale + w / 2,
+          sy: (by + centerWarpY - h / 2) * map.scale + h / 2,
           sw: bw * map.scale, sh: bh * map.scale
         };
       }
@@ -809,9 +850,7 @@ function renderDiagonalWeave(p) {
       for (let i = 1; i < cornersXY.length; i++) ctx.lineTo(cornersXY[i][0], cornersXY[i][1]);
       ctx.closePath();
       ctx.clip();
-      ctx.filter = useA ? filterA : filterB;
-      ctx.drawImage(useA ? imgA : imgB, sx, sy, sw, sh, bx, by, bw, bh);
-      ctx.filter = 'none';
+      ctx.drawImage(map.source, sx, sy, sw, sh, bx, by, bw, bh);
       ctx.restore();
 
       // group-level shadow: drawn once per group (from its anchor diamond), clipped
