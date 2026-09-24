@@ -315,13 +315,25 @@ function photoFilter(exposureVal, brillianceVal) {
   return `brightness(${brightness}) contrast(${contrast}) saturate(${saturate})`;
 }
 
+function imageNaturalSize(img) {
+  // HTMLImageElement uses naturalWidth/naturalHeight; our mobile-safe filtered
+  // sources are canvases, which use width/height instead. Keep both paths here
+  // so the animation can render the filtered sources without producing NaN
+  // coordinates on iOS Safari.
+  const nw = Number(img.naturalWidth) || Number(img.width) || 0;
+  const nh = Number(img.naturalHeight) || Number(img.height) || 0;
+  return { width: nw, height: nh };
+}
+
 function drawCover(img, w, h, destCtx) {
   const targetCtx = destCtx || ctx;
-  const ir = img.naturalWidth / img.naturalHeight;
+  const size = imageNaturalSize(img);
+  if (!size.width || !size.height || !w || !h) return;
+  const ir = size.width / size.height;
   const cr = w / h;
   let sx, sy, sw, sh;
-  if (ir > cr) { sh = img.naturalHeight; sw = sh * cr; sx = (img.naturalWidth - sw) / 2; sy = 0; }
-  else { sw = img.naturalWidth; sh = sw / cr; sx = 0; sy = (img.naturalHeight - sh) / 2; }
+  if (ir > cr) { sh = size.height; sw = sh * cr; sx = (size.width - sw) / 2; sy = 0; }
+  else { sw = size.width; sh = sw / cr; sx = 0; sy = (size.height - sh) / 2; }
   targetCtx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
 }
 

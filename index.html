@@ -183,7 +183,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .profile-btn:hover{border-color:var(--accent);color:var(--text)}
 .profile-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
 .profile-btn:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
-@media(max-width:700px){.profile-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){
+  .profile-grid{grid-template-columns:repeat(2,1fr)}
+  .dual-drop{max-width:270px;gap:7px}
+  .mini-drop{aspect-ratio:1;flex:none;width:calc((100% - 7px) / 2)}
+}
 </style>
 </head>
 <body>
