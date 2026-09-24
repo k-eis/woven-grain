@@ -42,6 +42,67 @@ themeBtns.forEach(btn => {
 
 const imgA = new Image();
 const imgB = new Image();
+
+// iOS Safari can fail to apply CanvasRenderingContext2D.filter reliably while
+// repeatedly drawing image fragments during slider interaction.  Keep a
+// pixel-processed copy of Photo A/B instead, so the adjustment is baked into
+// the actual source canvas used by the weave renderer.
+let renderImgA = imgA;
+let renderImgB = imgB;
+
+function makeFilteredImage(img, exposureVal, brillianceVal) {
+  if (!img || !img.naturalWidth || !img.naturalHeight) return img;
+  if (exposureVal === 0 && brillianceVal === 0) return img;
+
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const cctx = c.getContext('2d', { willReadFrequently: true });
+  cctx.drawImage(img, 0, 0);
+
+  const image = cctx.getImageData(0, 0, c.width, c.height);
+  const d = image.data;
+  const brightness = 1 + exposureVal / 100;
+  const contrast = 1 + brillianceVal / 130;
+  const saturation = 1 + brillianceVal / 100;
+  const lumR = 0.2126, lumG = 0.7152, lumB = 0.0722;
+
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i] * brightness;
+    let g = d[i + 1] * brightness;
+    let b = d[i + 2] * brightness;
+
+    r = (r - 128) * contrast + 128;
+    g = (g - 128) * contrast + 128;
+    b = (b - 128) * contrast + 128;
+
+    const y = r * lumR + g * lumG + b * lumB;
+    r = y + (r - y) * saturation;
+    g = y + (g - y) * saturation;
+    b = y + (b - y) * saturation;
+
+    d[i] = Math.max(0, Math.min(255, r));
+    d[i + 1] = Math.max(0, Math.min(255, g));
+    d[i + 2] = Math.max(0, Math.min(255, b));
+  }
+
+  cctx.putImageData(image, 0, 0);
+  // Canvas does not have naturalWidth/naturalHeight, but the weave code uses
+  // those properties for source-coordinate mapping.  Add the same dimensions
+  // as expando properties so it can be used as a drop-in image source.
+  c.naturalWidth = c.width;
+  c.naturalHeight = c.height;
+  return c;
+}
+
+function rebuildFilteredSources() {
+  const ea = parseInt(exposureASlider.value, 10) || 0;
+  const ba = parseInt(brillianceASlider.value, 10) || 0;
+  const eb = parseInt(exposureBSlider.value, 10) || 0;
+  const bb = parseInt(brillianceBSlider.value, 10) || 0;
+  renderImgA = makeFilteredImage(imgA, ea, ba);
+  renderImgB = makeFilteredImage(imgB, eb, bb);
+}
 const imgC = new Image();
 let hasA = false, hasB = false, hasC = false;
 
@@ -162,9 +223,7 @@ function updatePreviews(filterA, filterB) {
     if (previewA.height !== h) previewA.height = h;
     const pctx = previewA.getContext('2d');
     pctx.clearRect(0, 0, w, h);
-    pctx.filter = filterA;
-    drawCover(imgA, w, h, pctx);
-    pctx.filter = 'none';
+    drawCover(renderImgA, w, h, pctx);
   }
   if (hasB && previewB) {
     const w = previewB.clientWidth || 160, h = previewB.clientHeight || 160;
@@ -172,9 +231,7 @@ function updatePreviews(filterA, filterB) {
     if (previewB.height !== h) previewB.height = h;
     const pctx = previewB.getContext('2d');
     pctx.clearRect(0, 0, w, h);
-    pctx.filter = filterB;
-    drawCover(imgB, w, h, pctx);
-    pctx.filter = 'none';
+    drawCover(renderImgB, w, h, pctx);
   }
 }
 
@@ -205,6 +262,7 @@ function render() {
 
   const filterA = photoFilter(parseInt(exposureASlider.value, 10), parseInt(brillianceASlider.value, 10));
   const filterB = photoFilter(parseInt(exposureBSlider.value, 10), parseInt(brillianceBSlider.value, 10));
+  rebuildFilteredSources();
   updatePreviews(filterA, filterB);
 
   if (!hasA || !hasB) {
@@ -284,7 +342,7 @@ function render() {
       const ch = Math.min(mesh, h - gy);
       const warpX = warpAmt * Math.sin(gy * 0.05 + col);
       const warpY = warpAmt * Math.sin(gx * 0.05 + row);
-      const underImg = useA ? imgB : imgA;
+      const underImg = useA ? renderImgB : renderImgA;
       const ir = underImg.naturalWidth / underImg.naturalHeight;
       const cr = w / h;
       const baseScale = ir > cr ? underImg.naturalHeight / h : underImg.naturalWidth / w;
@@ -305,9 +363,7 @@ function render() {
       ctx.save();
       octagonPath(ufx, ufy, ujw, ujh, cornerCut);
       ctx.clip();
-      ctx.filter = useA ? filterB : filterA;
       ctx.drawImage(underImg, usx, usy, cw * scale, ch * scale, ufx, ufy, ujw, ujh);
-      ctx.filter = 'none';
       ctx.restore();
     }
   }
@@ -355,7 +411,7 @@ function render() {
         return { sx: offX + (gx + warpX) * scale, sy: offY + (gy + warpY) * scale, sw: cw * scale, sh: ch * scale };
       }
 
-      const srcImg = useA ? imgA : imgB;
+      const srcImg = useA ? renderImgA : renderImgB;
       const fg = sampleFor(srcImg);
       const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
 
@@ -373,9 +429,7 @@ function render() {
       ctx.save();
       octagonPath(fx, fy, fw, fh, cornerCut);
       ctx.clip();
-      ctx.filter = useA ? filterA : filterB;
       ctx.drawImage(srcImg, sx, sy, sw, sh, fx, fy, fw, fh);
-      ctx.filter = 'none';
       ctx.restore();
 
       // draw the strand-segment's shadow/highlight only ONCE per group, from its
@@ -500,198 +554,170 @@ function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepth
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
 function renderDiagonalWeave(p) {
-  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionDepthMul, filterA, filterB } = p;
+  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
+  const cx = w / 2, cy = h / 2;
+  const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2; // 45°
 
-  // DIAGONAL is rendered as two real families of continuous diagonal strands,
-  // rather than a field of rotated diamond tiles.  This is important: a diamond
-  // grid looks diagonal, but it does not read as something that has actually
-  // been woven.  Here A travels / and B travels \\, and the crossing order
-  // alternates segment by segment.
-  const angle = Math.PI / 4;
-  const c = Math.cos(angle), s = Math.sin(angle);
-  const ux = c, uy = s;       // along +45° strand
-  const vx = -s, vy = c;      // perpendicular to +45° strand
-  const strandGap = Math.max(8, mesh * 0.92);
-  const strandWidth = Math.max(4, mesh * (0.78 + tensionFactor * 0.10));
-  const halfW = strandWidth / 2;
-  const segmentLen = Math.max(mesh * Math.max(1, strandLength), mesh * 1.5);
-  const diag = Math.hypot(w, h) + strandGap * 4;
-  const extent = diag * 0.72;
+  const diag = Math.sqrt(w * w + h * h);
+  const range = Math.ceil(diag / 2 / mesh) + 2;
 
-  function sourceMap(img) {
+  // precompute cover-fit mapping (source <- canvas) once per photo, reused for every diamond's bounding box.
+  // zoomFactor (tied to MESH SIZE) scales past the normal cover-fit baseline so a wider mesh reads as more zoomed-in.
+  function coverMap(img) {
     const ir = img.naturalWidth / img.naturalHeight;
     const cr = w / h;
     const baseScale = ir > cr ? img.naturalHeight / h : img.naturalWidth / w;
     const scale = baseScale * zoomFactor;
-    return {
-      scale,
-      offX: (img.naturalWidth - w * scale) / 2,
-      offY: (img.naturalHeight - h * scale) / 2
-    };
+    const offX = (img.naturalWidth - w * scale) / 2;
+    const offY = (img.naturalHeight - h * scale) / 2;
+    return { scale, offX, offY };
   }
-  const mapA = sourceMap(imgA), mapB = sourceMap(imgB);
+  const mapA = coverMap(renderImgA), mapB = coverMap(renderImgB);
 
-  function drawPhotoPolygon(img, map, poly, filter, alpha = 1) {
-    const xs = poly.map(q => q[0]), ys = poly.map(q => q[1]);
-    const bx = Math.min(...xs), by = Math.min(...ys);
-    const bx2 = Math.max(...xs), by2 = Math.max(...ys);
-    const bw = bx2 - bx, bh = by2 - by;
-    if (bw <= 0 || bh <= 0) return;
-
-    // Slightly warp the source sampling, but keep the geometry itself stable.
-    const mx = (bx + bx2) * 0.5, my = (by + by2) * 0.5;
-    const wx = warpAmt * Math.sin(my * 0.045) * 0.35;
-    const wy = warpAmt * Math.sin(mx * 0.045) * 0.35;
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.moveTo(poly[0][0], poly[0][1]);
-    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
-    ctx.closePath();
-    ctx.clip();
-    ctx.filter = filter;
-    ctx.drawImage(img,
-      map.offX + (bx + wx) * map.scale,
-      map.offY + (by + wy) * map.scale,
-      bw * map.scale,
-      bh * map.scale,
-      bx, by, bw, bh);
-    ctx.filter = 'none';
-    ctx.restore();
+  function boundsOf(corners) {
+    const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+    const bx = Math.max(0, Math.min(w, Math.min(...xs)));
+    const by = Math.max(0, Math.min(h, Math.min(...ys)));
+    const bxMax = Math.max(0, Math.min(w, Math.max(...xs)));
+    const byMax = Math.max(0, Math.min(h, Math.max(...ys)));
+    return { bx, by, bw: bxMax - bx, bh: byMax - by };
   }
 
-  function strandCenter(family, offset, t) {
-    // family 0 = /, family 1 = \\ .
-    const sign = family === 0 ? 1 : -1;
-    if (family === 0) {
-      return [cx(offset, t), cy(offset, t)];
-    }
-    return [cx(offset, t), cy(offset, t)];
-  }
-  function cx(offset, t) { return w / 2 + offset * vx + t * ux; }
-  function cy(offset, t) { return h / 2 + offset * vy + t * uy; }
-  function centerMinusPlus(family, offset, t) {
-    if (family === 0) return [cx(offset, t), cy(offset, t)];
-    // For the opposite family, rotate the along/perpendicular basis by 90°.
-    return [w / 2 + offset * (-ux) + t * vx, h / 2 + offset * (-uy) + t * vy];
-  }
+  // ── PASS 1 (UNDER layer): every diamond's crossing photo drawn first at its
+  // full, un-shrunk footprint — guarantees the strand that's "under" at a given
+  // crossing is always fully present, same rationale as the axis-aligned modes.
+  for (let row = -range; row <= range; row++) {
+    for (let col = -range; col <= range; col++) {
+      const u0 = row * mesh, v0 = col * mesh;
+      const gRow = Math.floor(row / strandLength);
+      const gCol = Math.floor(col / strandLength);
+      let baseUseA = (gRow + gCol) % 2 === 0;
+      let useA = baseUseA;
+      if (density > 50 && !baseUseA) { if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true; }
+      else if (density < 50 && baseUseA) { if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false; }
 
-  // Build segment polygons for each family. Each segment is a real ribbon with
-  // thickness, not a rotated square.  This also makes the edges much cleaner on
-  // mobile Safari where tiny clipped diamonds tended to disappear.
-  function makeSegment(family, offset, t0, t1, segIndex) {
-    let ex, ey, px, py;
-    if (family === 0) { ex = ux; ey = uy; px = vx; py = vy; }
-    else { ex = vx; ey = vy; px = -ux; py = -uy; }
+      const cornersUV = [[u0, v0], [u0 + mesh, v0], [u0 + mesh, v0 + mesh], [u0, v0 + mesh]];
+      const cornersXYBase = cornersUV.map(([u, v], i) => {
+        const jx = (seededRandom(row, col, 10 + i) - 0.5) * 2 * imperfAmt;
+        const jy = (seededRandom(row, col, 20 + i) - 0.5) * 2 * imperfAmt;
+        return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
+      });
+      const centroid = cornersXYBase.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
+      const baseB = boundsOf(cornersXYBase);
+      if (baseB.bw <= 0 || baseB.bh <= 0) continue;
 
-    const bend0 = imperfAmt * (seededRandom(Math.round(offset), segIndex, 101 + family) - 0.5);
-    const bend1 = imperfAmt * (seededRandom(Math.round(offset), segIndex, 102 + family) - 0.5);
-    const p0 = [w/2 + offset * px + t0 * ex + bend0, h/2 + offset * py + t0 * ey + bend0];
-    const p1 = [w/2 + offset * px + t1 * ex + bend1, h/2 + offset * py + t1 * ey + bend1];
-    const hw = halfW;
-    return [
-      [p0[0] - px * hw, p0[1] - py * hw],
-      [p1[0] - px * hw, p1[1] - py * hw],
-      [p1[0] + px * hw, p1[1] + py * hw],
-      [p0[0] + px * hw, p0[1] + py * hw]
-    ];
-  }
-
-  const strands = [];
-  for (let family = 0; family < 2; family++) {
-    for (let offset = -extent; offset <= extent; offset += strandGap) {
-      const segs = [];
-      for (let t = -extent; t < extent; t += segmentLen) {
-        const segIndex = Math.floor((t + extent) / segmentLen);
-        const poly = makeSegment(family, offset, t, Math.min(t + segmentLen + 0.5, extent), segIndex);
-        const xs = poly.map(q => q[0]), ys = poly.map(q => q[1]);
-        if (Math.max(...xs) < 0 || Math.min(...xs) > w || Math.max(...ys) < 0 || Math.min(...ys) > h) continue;
-        // The parity determines which family sits on top at each crossing.
-        const offsetIndex = Math.round((offset + extent) / strandGap);
-        const over = ((offsetIndex + segIndex) & 1) === 0;
-        segs.push({ poly, family, over, segIndex, offsetIndex });
-      }
-      strands.push(...segs);
-    }
-  }
-
-  // Under pass first. This guarantees a continuous woven base and avoids the
-  // accidental "transparent diamond holes" of the previous implementation.
-  for (const seg of strands) {
-    if (seg.over) continue;
-    const img = seg.family === 0 ? imgA : imgB;
-    const filter = seg.family === 0 ? filterA : filterB;
-    const map = seg.family === 0 ? mapA : mapB;
-    drawPhotoPolygon(img, map, seg.poly, filter);
-  }
-
-  // Over pass: the same physical ribbons are drawn again, but only where their
-  // alternating crossing order says they should sit above the other family.
-  for (const seg of strands) {
-    if (!seg.over) continue;
-    const img = seg.family === 0 ? imgA : imgB;
-    const filter = seg.family === 0 ? filterA : filterB;
-    const map = seg.family === 0 ? mapA : mapB;
-    drawPhotoPolygon(img, map, seg.poly, filter);
-  }
-
-  // Density controls a restrained organic variation in strand opacity/visibility.
-  // Keep it subtle so DIAGONAL remains a weave rather than becoming a checkerboard.
-  if (density !== 50) {
-    const strength = Math.abs(density - 50) / 100;
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalAlpha = strength * 0.08;
-    ctx.fillStyle = '#000';
-    for (let i = 0; i < strands.length; i += 5) {
-      const seg = strands[i];
+      const centerWarpX = warpAmt * Math.sin(centroid[1] * 0.05 + col);
+      const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
+      const underMap = useA ? mapB : mapA;
+      const ubg = {
+        sx: underMap.offX + (baseB.bx + centerWarpX) * underMap.scale,
+        sy: underMap.offY + (baseB.by + centerWarpY) * underMap.scale,
+        sw: baseB.bw * underMap.scale, sh: baseB.bh * underMap.scale
+      };
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(seg.poly[0][0], seg.poly[0][1]);
-      for (let j = 1; j < seg.poly.length; j++) ctx.lineTo(seg.poly[j][0], seg.poly[j][1]);
+      ctx.moveTo(cornersXYBase[0][0], cornersXYBase[0][1]);
+      for (let i = 1; i < cornersXYBase.length; i++) ctx.lineTo(cornersXYBase[i][0], cornersXYBase[i][1]);
       ctx.closePath();
-      ctx.fill();
+      ctx.clip();
+      ctx.drawImage(useA ? renderImgB : renderImgA, ubg.sx, ubg.sy, ubg.sw, ubg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
+      ctx.restore();
     }
-    ctx.restore();
   }
 
-  // Shared directional relief. Unlike the old diamond implementation, this is
-  // applied to the actual diagonal ribbon edges, so LIGHT DIRECTION now reads
-  // as a real raised strand instead of lighting a grid cell.
-  if (depthAmt > 0.002) {
-    const edgeAlpha = Math.min(0.34, depthAmt * 0.30 * tensionDepthMul);
-    const reach = Math.max(1.5, strandWidth * 0.34 * Math.max(0.15, shadowReach));
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-    for (const seg of strands) {
-      const poly = seg.poly;
-      for (let i = 0; i < 4; i++) {
-        const a = poly[i], b = poly[(i + 1) % 4];
-        const ex = b[0] - a[0], ey = b[1] - a[1];
-        const len = Math.hypot(ex, ey) || 1;
-        const nx = -ey / len, ny = ex / len;
-        const lit = nx * lightVec.x + ny * lightVec.y;
-        if (Math.abs(lit) < 0.08) continue;
-        const alpha = edgeAlpha * Math.abs(lit) * (seg.over ? 1 : 0.72);
-        const color = lit > 0 ? '255,248,232' : '0,0,0';
-        const g = ctx.createLinearGradient(a[0], a[1], a[0] + nx * reach, a[1] + ny * reach);
-        g.addColorStop(0, `rgba(${color},${alpha})`);
-        g.addColorStop(1, `rgba(${color},0)`);
-        ctx.fillStyle = g;
+  // ── PASS 2 (OVER layer): the crossing-winning photo, its diamond scaled up
+  // from a constant baseline (a real fold-over edge even at neutral tension) —
+  // TIGHT grows the overlap further, LOOSE shrinks it back toward (never past)
+  // the base diamond, always revealing the always-present under layer beneath.
+  for (let row = -range; row <= range; row++) {
+    for (let col = -range; col <= range; col++) {
+      const u0 = row * mesh, v0 = col * mesh;
+      // STRAND LENGTH groups neighboring diamonds into the same continuous segment,
+      // same rationale as basket/stripe below
+      const gRow = Math.floor(row / strandLength);
+      const gCol = Math.floor(col / strandLength);
+      let baseUseA = (gRow + gCol) % 2 === 0;
+      let useA = baseUseA;
+      if (density > 50 && !baseUseA) {
+        if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true;
+      } else if (density < 50 && baseUseA) {
+        if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false;
+      }
+
+      // diamond corners: rotated-grid square -> screen space, with IMPERFECTION
+      // jittering each corner individually (uneven hand-woven edges) and TENSION
+      // scaling the whole diamond from its centroid (tight = overlapping/sealed, loose = gaps)
+      const cornersUV = [[u0, v0], [u0 + mesh, v0], [u0 + mesh, v0 + mesh], [u0, v0 + mesh]];
+      const cornersXYBase = cornersUV.map(([u, v], i) => {
+        const jx = (seededRandom(row, col, 10 + i) - 0.5) * 2 * imperfAmt;
+        const jy = (seededRandom(row, col, 20 + i) - 0.5) * 2 * imperfAmt;
+        return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
+      });
+      const centroid = cornersXYBase.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
+      const tensionScale = 1.16 + tensionFactor * 0.22; // 1.16 baseline overlap at neutral tension
+      const cornersXY = cornersXYBase.map(([x, y]) => [
+        centroid[0] + (x - centroid[0]) * tensionScale,
+        centroid[1] + (y - centroid[1]) * tensionScale
+      ]);
+
+      const baseB = boundsOf(cornersXYBase);
+      if (baseB.bw <= 0 || baseB.bh <= 0) continue; // diamond entirely off-canvas, skip
+
+      const centerWarpX = warpAmt * Math.sin(centroid[1] * 0.05 + col);
+      const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
+
+      function sampleFor(map, bx, by, bw, bh) {
+        return {
+          sx: map.offX + (bx + centerWarpX) * map.scale,
+          sy: map.offY + (by + centerWarpY) * map.scale,
+          sw: bw * map.scale, sh: bh * map.scale
+        };
+      }
+
+      const fgBounds = boundsOf(cornersXY);
+      const { bx, by, bw, bh } = fgBounds;
+      if (bw <= 0 || bh <= 0) continue;
+
+      const map = useA ? mapA : mapB;
+      const fg = sampleFor(map, bx, by, bw, bh);
+      const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cornersXY[0][0], cornersXY[0][1]);
+      for (let i = 1; i < cornersXY.length; i++) ctx.lineTo(cornersXY[i][0], cornersXY[i][1]);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(useA ? renderImgA : renderImgB, sx, sy, sw, sh, bx, by, bw, bh);
+      ctx.restore();
+
+      // group-level shadow: drawn once per group (from its anchor diamond), clipped
+      // to the BIG group diamond's own path (not the small per-cell one) so the glow
+      // hugs the group's true outer edge instead of stacking a blob on every sub-cell
+      const isGroupAnchor = row % strandLength === 0 && col % strandLength === 0;
+      if (depthAmt > 0 && isGroupAnchor) {
+        const gu0 = row * mesh, gv0 = col * mesh;
+        const gSize = strandLength * mesh;
+        const groupCornersUV = [[gu0, gv0], [gu0 + gSize, gv0], [gu0 + gSize, gv0 + gSize], [gu0, gv0 + gSize]];
+        let groupCorners = groupCornersUV.map(([u, v]) => [u * cosA - v * sinA + cx, u * sinA + v * cosA + cy]);
+        const gCentroid = groupCorners.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
+        groupCorners = groupCorners.map(([x, y]) => [
+          gCentroid[0] + (x - gCentroid[0]) * tensionScale,
+          gCentroid[1] + (y - gCentroid[1]) * tensionScale
+        ]);
+        ctx.save();
         ctx.beginPath();
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
-        ctx.lineTo(b[0] + nx * reach, b[1] + ny * reach);
-        ctx.lineTo(a[0] + nx * reach, a[1] + ny * reach);
+        ctx.moveTo(groupCorners[0][0], groupCorners[0][1]);
+        for (let i = 1; i < groupCorners.length; i++) ctx.lineTo(groupCorners[i][0], groupCorners[i][1]);
         ctx.closePath();
-        ctx.fill();
+        ctx.clip();
+        applyPolygonEdgeGlow(groupCorners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
+        ctx.restore();
       }
     }
-    ctx.restore();
   }
 }
-
 
 [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightDirectionSlider, grainSlider, lightIntensitySlider,
  exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
