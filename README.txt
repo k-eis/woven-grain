@@ -1,6 +1,11 @@
-Woven Grain — mobile A/B adjustment fix
+Woven Grain — mobile A/B adjustment stability fix
 
-Fixes iOS/mobile preview and woven rendering for Photo A/B EXPOSURE and BRILLIANCE.
-The adjustments are baked into cached pixel-processed source canvases instead of relying on CanvasRenderingContext2D.filter.
+This version keeps the A/B exposure/brilliance adjustment visible in both previews and the woven output, while avoiding full-resolution ImageData processing on every slider movement.
 
-This keeps the A/B controls independent and makes the adjusted images visible both in the small previews and in the woven output.
+Mobile stability changes:
+- Phone photos are reduced to a maximum working dimension of 1600px before pixel processing.
+- Filtered sources are cached and rebuilt only when that photo's adjustment actually changes.
+- Rapid slider events are coalesced to one render per animation frame.
+- The original A/B images remain untouched.
+
+This is intended to prevent iPhone/Safari memory pressure that can cause a black canvas or a page reset after preview rendering.

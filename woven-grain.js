@@ -49,16 +49,42 @@ const imgB = new Image();
 // the actual source canvas used by the weave renderer.
 let renderImgA = imgA;
 let renderImgB = imgB;
+let baseImgA = null;
+let baseImgB = null;
+let filteredKeyA = '';
+let filteredKeyB = '';
+
+// Mobile Safari can run out of memory when a full-resolution phone photo is
+// copied into ImageData on every slider movement. Keep a bounded working copy.
+const FILTER_MAX_DIM = 1600;
+
+function makeWorkingImage(img) {
+  if (!img || !img.naturalWidth || !img.naturalHeight) return img;
+  const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
+  if (maxDim <= FILTER_MAX_DIM) return img;
+
+  const scale = FILTER_MAX_DIM / maxDim;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const cctx = c.getContext('2d');
+  cctx.drawImage(img, 0, 0, c.width, c.height);
+  c.naturalWidth = c.width;
+  c.naturalHeight = c.height;
+  return c;
+}
 
 function makeFilteredImage(img, exposureVal, brillianceVal) {
   if (!img || !img.naturalWidth || !img.naturalHeight) return img;
-  if (exposureVal === 0 && brillianceVal === 0) return img;
+
+  const source = makeWorkingImage(img);
+  if (exposureVal === 0 && brillianceVal === 0) return source;
 
   const c = document.createElement('canvas');
-  c.width = img.naturalWidth;
-  c.height = img.naturalHeight;
+  c.width = source.naturalWidth;
+  c.height = source.naturalHeight;
   const cctx = c.getContext('2d', { willReadFrequently: true });
-  cctx.drawImage(img, 0, 0);
+  cctx.drawImage(source, 0, 0);
 
   const image = cctx.getImageData(0, 0, c.width, c.height);
   const d = image.data;
@@ -71,25 +97,19 @@ function makeFilteredImage(img, exposureVal, brillianceVal) {
     let r = d[i] * brightness;
     let g = d[i + 1] * brightness;
     let b = d[i + 2] * brightness;
-
     r = (r - 128) * contrast + 128;
     g = (g - 128) * contrast + 128;
     b = (b - 128) * contrast + 128;
-
     const y = r * lumR + g * lumG + b * lumB;
     r = y + (r - y) * saturation;
     g = y + (g - y) * saturation;
     b = y + (b - y) * saturation;
-
     d[i] = Math.max(0, Math.min(255, r));
     d[i + 1] = Math.max(0, Math.min(255, g));
     d[i + 2] = Math.max(0, Math.min(255, b));
   }
 
   cctx.putImageData(image, 0, 0);
-  // Canvas does not have naturalWidth/naturalHeight, but the weave code uses
-  // those properties for source-coordinate mapping.  Add the same dimensions
-  // as expando properties so it can be used as a drop-in image source.
   c.naturalWidth = c.width;
   c.naturalHeight = c.height;
   return c;
@@ -100,9 +120,21 @@ function rebuildFilteredSources() {
   const ba = parseInt(brillianceASlider.value, 10) || 0;
   const eb = parseInt(exposureBSlider.value, 10) || 0;
   const bb = parseInt(brillianceBSlider.value, 10) || 0;
-  renderImgA = makeFilteredImage(imgA, ea, ba);
-  renderImgB = makeFilteredImage(imgB, eb, bb);
+  const keyA = `${imgA.src}|${ea}|${ba}`;
+  const keyB = `${imgB.src}|${eb}|${bb}`;
+
+  if (keyA !== filteredKeyA) {
+    baseImgA = makeWorkingImage(imgA);
+    renderImgA = makeFilteredImage(baseImgA, ea, ba);
+    filteredKeyA = keyA;
+  }
+  if (keyB !== filteredKeyB) {
+    baseImgB = makeWorkingImage(imgB);
+    renderImgB = makeFilteredImage(baseImgB, eb, bb);
+    filteredKeyB = keyB;
+  }
 }
+
 const imgC = new Image();
 let hasA = false, hasB = false, hasC = false;
 
@@ -719,6 +751,12 @@ function renderDiagonalWeave(p) {
   }
 }
 
+let renderFrame = 0;
+function scheduleRender() {
+  if (renderFrame) return;
+  renderFrame = requestAnimationFrame(() => { renderFrame = 0; render(); });
+}
+
 [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightDirectionSlider, grainSlider, lightIntensitySlider,
  exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
   el.addEventListener('input', () => {
@@ -737,7 +775,7 @@ function renderDiagonalWeave(p) {
     brillianceAVal.textContent = brillianceASlider.value;
     exposureBVal.textContent = exposureBSlider.value;
     brillianceBVal.textContent = brillianceBSlider.value;
-    render();
+    scheduleRender();
   });
 });
 backlightToggle.addEventListener('change', render);
