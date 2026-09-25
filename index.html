@@ -167,6 +167,9 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
   h1 { font-size: 24px; }
   h1 .jp { display: block; margin-left: 0; margin-top: 4px; }
   .stage { grid-template-columns: 1fr; border: none; }
+  /* Mobile: keep Photo A/B previews compact so their controls remain easy to reach. */
+  .dual-drop { max-width: 300px; gap: 8px; }
+  .mini-drop { max-width: 146px; }
   .canvas-area { border: 1px solid var(--line-strong); border-bottom: none; min-height: 220px; top: 0; z-index: 20; }
   canvas#outputCanvas { max-height: 42vh; }
   .controls { border: 1px solid var(--line-strong); border-top: none; padding: 18px 16px; }
