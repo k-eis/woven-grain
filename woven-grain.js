@@ -473,7 +473,7 @@ function render() {
   const backlightOn = backlightToggle.checked && hasC;
   const lightIntensity = parseInt(lightIntensitySlider.value, 10) / 100;
   const grainAmt = parseInt(grainSlider.value, 10) / 100;
-  const reliefAmt = parseInt(reliefSlider.value, 10) / 100;
+  const reliefAmt = Math.max(parseInt(reliefSlider.value, 10) / 100, depthAmt * 0.72);
   const contactShadowAmt = parseInt(contactShadowSlider.value, 10) / 100;
   const specularAmt = parseInt(specularSlider.value, 10) / 100;
   const surfaceBendAmt = parseInt(surfaceBendSlider.value, 10) / 100;
@@ -531,7 +531,7 @@ function render() {
   }
 
   if (currentDirection === 'diagonal') {
-    renderDiagonalWeave({ sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt: visualDepthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, filterA, filterB, animationProgress: ap, weaveProgress: weaveP, lightProgress: lightP });
+    renderDiagonalWeave({ sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt: visualDepthAmt, shadowReach, lightVec, lightIntensity: visualLightIntensity, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, filterA, filterB, animationProgress: ap, weaveProgress: weaveP, lightProgress: lightP });
     if (ap == null || ap >= 0.96) applyGrain(grainAmt);
     return;
   }
@@ -661,7 +661,7 @@ function render() {
           gw0 = Math.min(strandLength * mesh, w - gx0);
           gh0 = Math.min(strandLength * mesh, h - gy0);
         }
-        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, visualDepthAmt, shadowReach, tensionDepthMul, lightVec);
+        applyEdgeGlow(gx0, gy0, gw0, gh0, useA, visualDepthAmt, shadowReach, tensionDepthMul, lightVec, visualLightIntensity);
       }
     }
   }
@@ -677,7 +677,7 @@ function render() {
         const gh = Math.min(strandLength * mesh, h - gy);
         if (gw <= 1 || gh <= 1) continue;
         const groupParity = (Math.floor(r / strandLength) + Math.floor(c / strandLength)) % 2;
-        applySurfaceReliefRect(gx, gy, gw, gh, groupParity === 0, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, lightVec, groupParity === 0);
+        applySurfaceReliefRect(gx, gy, gw, gh, groupParity === 0, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, lightVec, visualLightIntensity, shadowReach, groupParity === 0);
       }
     }
   }
@@ -726,13 +726,15 @@ function reliefProfileParams() {
 // with gradients, contact shadow and a restrained specular highlight, keeping
 // the Canvas-2D/mobile architecture intact while making the weave read as a
 // physical surface rather than a flat photo grid.
-function applySurfaceReliefRect(x, y, w, h, useA, reliefAmt, contactAmt, specAmt, bendAmt, lightVec, strandHorizontal) {
+function applySurfaceReliefRect(x, y, w, h, useA, reliefAmt, contactAmt, specAmt, bendAmt, lightVec, lightIntensity, shadowReach, strandHorizontal) {
   if (reliefAmt <= 0.002 || w <= 1 || h <= 1) return;
   const pp = reliefProfileParams();
   const crossLen = strandHorizontal ? h : w;
-  const crown = Math.min(0.30, 0.08 + reliefAmt * 0.24 * pp.crown);
-  const edge = Math.min(0.32, 0.05 + reliefAmt * 0.22 * pp.edge);
-  const reach = Math.max(1.5, crossLen * (0.14 + 0.18 * bendAmt));
+  const crown = Math.min(0.62, 0.10 + reliefAmt * 0.48 * pp.crown);
+  const edge = Math.min(0.58, 0.06 + reliefAmt * 0.42 * pp.edge);
+  const lightPower = Math.max(0, Math.min(1, lightIntensity == null ? 1 : lightIntensity));
+  const shadowPower = Math.max(0, Math.min(1, shadowReach == null ? 0.75 : shadowReach));
+  const reach = Math.max(1.5, crossLen * (0.08 + 0.42 * shadowPower + 0.10 * bendAmt));
 
   ctx.save();
   ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
@@ -742,9 +744,9 @@ function applySurfaceReliefRect(x, y, w, h, useA, reliefAmt, contactAmt, specAmt
   const gx1 = x + (lightVec.x < 0 ? 0 : w);
   const gy1 = y + (lightVec.y < 0 ? 0 : h);
   const shade = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
-  shade.addColorStop(0, `rgba(255,250,238,${crown * 0.82})`);
-  shade.addColorStop(0.46, `rgba(255,255,255,${crown * 0.20})`);
-  shade.addColorStop(1, `rgba(0,0,0,${edge * 0.82})`);
+  shade.addColorStop(0, `rgba(255,250,238,${crown * (0.70 + 0.30 * lightPower)})`);
+  shade.addColorStop(0.46, `rgba(255,255,255,${crown * 0.28 * lightPower})`);
+  shade.addColorStop(1, `rgba(0,0,0,${edge * (0.72 + 0.28 * shadowPower)})`);
   ctx.globalCompositeOperation = 'soft-light';
   ctx.fillStyle = shade;
   ctx.fillRect(x, y, w, h);
@@ -779,17 +781,33 @@ function applySurfaceReliefRect(x, y, w, h, useA, reliefAmt, contactAmt, specAmt
   ctx.fillRect(x, y, w, h);
 
   if (contactAmt > 0.002) {
-    const sg = strandHorizontal ? ctx.createLinearGradient(0, y + h - reach, 0, y + h) : ctx.createLinearGradient(x + w - reach, 0, x + w, 0);
-    sg.addColorStop(0, 'rgba(0,0,0,0)');
-    sg.addColorStop(1, `rgba(0,0,0,${Math.min(0.46, 0.10 + contactAmt * 0.38)})`);
+    const dark = Math.min(0.72, 0.12 + contactAmt * 0.58 + shadowPower * 0.12);
+    const shadowOnPositive = strandHorizontal ? lightVec.y < 0 : lightVec.x < 0;
+    let sg;
+    if (strandHorizontal) {
+      const sy0 = shadowOnPositive ? y + h : y;
+      const sy1 = shadowOnPositive ? y + h - reach : y + reach;
+      sg = ctx.createLinearGradient(0, sy0, 0, sy1);
+    } else {
+      const sx0 = shadowOnPositive ? x + w : x;
+      const sx1 = shadowOnPositive ? x + w - reach : x + reach;
+      sg = ctx.createLinearGradient(sx0, 0, sx1, 0);
+    }
+    sg.addColorStop(0, `rgba(0,0,0,${dark})`);
+    sg.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.globalCompositeOperation = 'multiply';
     ctx.fillStyle = sg;
-    if (strandHorizontal) ctx.fillRect(x, y + h - reach, w, reach);
-    else ctx.fillRect(x + w - reach, y, reach, h);
+    if (strandHorizontal) {
+      const yy = shadowOnPositive ? y + h - reach : y;
+      ctx.fillRect(x, yy, w, reach);
+    } else {
+      const xx = shadowOnPositive ? x + w - reach : x;
+      ctx.fillRect(xx, y, reach, h);
+    }
   }
 
   if (specAmt > 0.002 && currentProfile !== 'flat') {
-    const sp = Math.min(0.18, specAmt * 0.16 * pp.crown);
+    const sp = Math.min(0.34, specAmt * (0.20 + 0.14 * lightPower) * pp.crown);
     const sg = strandHorizontal ? ctx.createLinearGradient(0, y + h * 0.24, 0, y + h * 0.56) : ctx.createLinearGradient(x + w * 0.24, 0, x + w * 0.56, 0);
     sg.addColorStop(0, 'rgba(255,255,255,0)');
     sg.addColorStop(0.55, `rgba(255,255,255,${sp})`);
@@ -801,7 +819,7 @@ function applySurfaceReliefRect(x, y, w, h, useA, reliefAmt, contactAmt, specAmt
   ctx.restore();
 }
 
-function applySurfaceReliefPolygon(corners, useA, reliefAmt, contactAmt, specAmt, bendAmt, lightVec) {
+function applySurfaceReliefPolygon(corners, useA, reliefAmt, contactAmt, specAmt, bendAmt, lightVec, lightIntensity, shadowReach) {
   if (reliefAmt <= 0.002 || !corners || corners.length < 4) return;
   const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
   const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs)-x, h = Math.max(...ys)-y;
@@ -810,15 +828,15 @@ function applySurfaceReliefPolygon(corners, useA, reliefAmt, contactAmt, specAmt
   ctx.beginPath(); ctx.moveTo(corners[0][0],corners[0][1]);
   for (let i=1;i<corners.length;i++) ctx.lineTo(corners[i][0],corners[i][1]);
   ctx.closePath(); ctx.clip();
-  applySurfaceReliefRect(x,y,w,h,useA,reliefAmt,contactAmt,specAmt,bendAmt,lightVec,strandHorizontal);
+  applySurfaceReliefRect(x,y,w,h,useA,reliefAmt,contactAmt,specAmt,bendAmt,lightVec,lightIntensity,shadowReach,strandHorizontal);
   ctx.restore();
 }
 
-function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
+function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec, lightIntensity) {
   const profileMul = currentProfile === 'round' ? 1.0 : currentProfile === 'ribbon' ? 0.82 : currentProfile === 'beveled' ? 1.12 : 0.58;
-  const peakBase = Math.max(0, Math.min(0.5, 0.27 * depthAmt * tensionDepthMul * profileMul * (useA ? 1.15 : 0.9)));
+  const peakBase = Math.max(0, Math.min(0.78, 0.42 * depthAmt * (0.75 + 0.25 * tensionDepthMul) * profileMul * (0.55 + 0.45 * (lightIntensity == null ? 1 : lightIntensity)) * (useA ? 1.15 : 0.9)));
   if (peakBase <= 0.002) return;
-  const reach = Math.max(1, Math.min(w, h) * 0.5 * Math.max(0.04, shadowReach));
+  const reach = Math.max(1, Math.min(w, h) * (0.08 + 0.55 * Math.max(0.04, shadowReach)));
 
   function edgeGlow(nx, ny, gx0, gy0, gx1, gy1, rx, ry, rw, rh) {
     const lit = nx * lightVec.x + ny * lightVec.y; // -1..1, >0 = facing the light
@@ -841,13 +859,13 @@ function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul,
 // Same idea as applyEdgeGlow but for an arbitrary quadrilateral (the rotated
 // diamond groups in DIAGONAL mode) — walks each edge and lights/shadows it
 // based on how directly its own outward normal faces the light source.
-function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
+function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec, lightIntensity) {
   const profileMul = currentProfile === 'round' ? 1.0 : currentProfile === 'ribbon' ? 0.82 : currentProfile === 'beveled' ? 1.12 : 0.58;
-  const peakBase = Math.max(0, Math.min(0.5, 0.27 * depthAmt * tensionDepthMul * profileMul * (useA ? 1.15 : 0.9)));
+  const peakBase = Math.max(0, Math.min(0.78, 0.42 * depthAmt * (0.75 + 0.25 * tensionDepthMul) * profileMul * (0.55 + 0.45 * (lightIntensity == null ? 1 : lightIntensity)) * (useA ? 1.15 : 0.9)));
   if (peakBase <= 0.002) return;
   const centroid = corners.reduce((a, c) => [a[0] + c[0] / corners.length, a[1] + c[1] / corners.length], [0, 0]);
   const edgeLen = Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
-  const reach = Math.max(1, edgeLen * 0.5 * Math.max(0.04, shadowReach));
+  const reach = Math.max(1, edgeLen * (0.08 + 0.55 * Math.max(0.04, shadowReach)));
 
   for (let i = 0; i < corners.length; i++) {
     const a = corners[i], b = corners[(i + 1) % corners.length];
@@ -934,7 +952,7 @@ function paintDiagonalMaskedSource(source, maskCtx, layerCtx, w, h, scale, warpX
 // keeps the actual diagonal basket geometry while avoiding Safari/iPhone canvas
 // blackouts caused by large numbers of edge-clipped source rectangles.
 function renderDiagonalWeave(p) {
-  const { sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec,
+  const { sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, lightIntensity,
     warpAmt, imperfAmt, density, tensionFactor, tensionDepthMul, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt,
     animationProgress, weaveProgress } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
@@ -1059,8 +1077,8 @@ function renderDiagonalWeave(p) {
       for (let i=1;i<g.corners.length;i++) ctx.lineTo(g.corners[i][0],g.corners[i][1]);
       ctx.closePath();
       ctx.clip();
-      if (depthAmt > 0) applyPolygonEdgeGlow(g.corners, g.useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
-      applySurfaceReliefPolygon(g.corners, g.useA, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, lightVec);
+      if (depthAmt > 0) applyPolygonEdgeGlow(g.corners, g.useA, depthAmt, shadowReach, tensionDepthMul, lightVec, lightIntensity);
+      applySurfaceReliefPolygon(g.corners, g.useA, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, lightVec, lightIntensity, shadowReach);
       ctx.restore();
     }
   }

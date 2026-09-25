@@ -1,12 +1,10 @@
-Woven Grain Pro — 3D Relief Update
+Woven Grain Pro — 3D Relief v7
 
-This update strengthens the woven-surface rendering while keeping the existing Canvas-2D/mobile architecture.
+Update:
+- WEAVE DEPTH now directly and visibly drives strand relief strength.
+- SHADOW REACH now directly controls contact-shadow length and edge-shadow spread.
+- LIGHT DIRECTION now controls the actual side from which highlights/shadows appear.
+- LIGHT INTENSITY is coupled into relief and edge lighting.
+- Existing STRAND PROFILE, Diagonal, iPhone preview fixes, and A/B controls are preserved.
 
-Changes:
-- Adds usable STRAND PROFILE shading for Round / Ribbon / Beveled / Flat.
-- Wires RELIEF, CONTACT SHADOW, SPECULAR and SURFACE BEND controls into the renderer.
-- Adds a raised cross-section treatment with directional light/shadow gradients.
-- Adds stronger contact shadows at the over/under boundary.
-- Adds restrained surface highlights for a more physical material read.
-- Applies the same relief treatment to DIAGONAL mode.
-- Keeps the existing iPhone/mobile-safe diagonal rendering and A/B preview improvements.
+The 3D treatment remains Canvas 2D/mobile-friendly, but the three parameters above now have deliberately stronger, more direct visual responses.
