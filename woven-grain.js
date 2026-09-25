@@ -519,7 +519,7 @@ function render() {
   }
 
   if (currentDirection === 'diagonal') {
-    renderDiagonalWeave({ mesh, zoomFactor, strandLength, depthAmt: visualDepthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB, animationProgress: ap, weaveProgress: weaveP, lightProgress: lightP });
+    renderDiagonalWeave({ sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt: visualDepthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB, animationProgress: ap, weaveProgress: weaveP, lightProgress: lightP });
     if (ap == null || ap >= 0.96) applyGrain(grainAmt);
     return;
   }
@@ -807,7 +807,7 @@ function paintDiagonalMaskedSource(source, maskCtx, layerCtx, w, h, scale, warpX
 // keeps the actual diagonal basket geometry while avoiding Safari/iPhone canvas
 // blackouts caused by large numbers of edge-clipped source rectangles.
 function renderDiagonalWeave(p) {
-  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec,
+  const { sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec,
     warpAmt, imperfAmt, density, tensionFactor, tensionDepthMul,
     animationProgress, weaveProgress } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
