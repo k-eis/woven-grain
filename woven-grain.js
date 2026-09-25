@@ -54,6 +54,14 @@ const directionBtns = document.querySelectorAll('[data-direction]');
 let currentDirection = 'basket';
 const profileBtns = document.querySelectorAll('[data-profile]');
 let currentProfile = 'round';
+const reliefSlider = document.getElementById('relief');
+const reliefVal = document.getElementById('reliefVal');
+const contactShadowSlider = document.getElementById('contactShadow');
+const contactShadowVal = document.getElementById('contactShadowVal');
+const specularSlider = document.getElementById('specular');
+const specularVal = document.getElementById('specularVal');
+const surfaceBendSlider = document.getElementById('surfaceBend');
+const surfaceBendVal = document.getElementById('surfaceBendVal');
 
 const exposureASlider = document.getElementById('exposureA');
 const exposureAVal = document.getElementById('exposureAVal');
@@ -465,6 +473,10 @@ function render() {
   const backlightOn = backlightToggle.checked && hasC;
   const lightIntensity = parseInt(lightIntensitySlider.value, 10) / 100;
   const grainAmt = parseInt(grainSlider.value, 10) / 100;
+  const reliefAmt = parseInt(reliefSlider.value, 10) / 100;
+  const contactShadowAmt = parseInt(contactShadowSlider.value, 10) / 100;
+  const specularAmt = parseInt(specularSlider.value, 10) / 100;
+  const surfaceBendAmt = parseInt(surfaceBendSlider.value, 10) / 100;
 
   // Animation phases:
   // INPUT/CUT: establish the material and cutting idea;
@@ -519,7 +531,7 @@ function render() {
   }
 
   if (currentDirection === 'diagonal') {
-    renderDiagonalWeave({ sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt: visualDepthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB, animationProgress: ap, weaveProgress: weaveP, lightProgress: lightP });
+    renderDiagonalWeave({ sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt: visualDepthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, filterA, filterB, animationProgress: ap, weaveProgress: weaveP, lightProgress: lightP });
     if (ap == null || ap >= 0.96) applyGrain(grainAmt);
     return;
   }
@@ -654,7 +666,23 @@ function render() {
     }
   }
 
-  if (ap == null || ap >= 0.96) applyGrain(grainAmt);
+  // Final material pass: one relief treatment per strand group. This adds a
+  // readable cross-section, contact shadow and restrained surface highlight.
+  if (reliefAmt > 0.002 || contactShadowAmt > 0.002 || specularAmt > 0.002) {
+    const rows = Math.ceil(h / mesh), cols = Math.ceil(w / mesh);
+    for (let r = 0; r < rows; r += strandLength) {
+      for (let c = 0; c < cols; c += strandLength) {
+        const gx = c * mesh, gy = r * mesh;
+        const gw = Math.min(strandLength * mesh, w - gx);
+        const gh = Math.min(strandLength * mesh, h - gy);
+        if (gw <= 1 || gh <= 1) continue;
+        const groupParity = (Math.floor(r / strandLength) + Math.floor(c / strandLength)) % 2;
+        applySurfaceReliefRect(gx, gy, gw, gh, groupParity === 0, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, lightVec, groupParity === 0);
+      }
+    }
+  }
+
+  applyGrain(grainAmt);
 }
 
 // Film-grain-style noise overlay — a per-pixel random luminance texture blended
@@ -687,6 +715,105 @@ function applyGrain(amt) {
 // direction across the whole piece (not just "A is always lit, B always dark").
 // lightVec is a unit vector pointing toward the light source; useA still adds a
 // small over/under bias on top of that shared directional lighting.
+function reliefProfileParams() {
+  if (currentProfile === 'round') return { crown: 1.00, edge: 0.72 };
+  if (currentProfile === 'ribbon') return { crown: 0.62, edge: 0.38 };
+  if (currentProfile === 'beveled') return { crown: 0.82, edge: 0.88 };
+  return { crown: 0.32, edge: 0.22 };
+}
+
+// Lightweight 2D relief renderer. It simulates a raised strand cross-section
+// with gradients, contact shadow and a restrained specular highlight, keeping
+// the Canvas-2D/mobile architecture intact while making the weave read as a
+// physical surface rather than a flat photo grid.
+function applySurfaceReliefRect(x, y, w, h, useA, reliefAmt, contactAmt, specAmt, bendAmt, lightVec, strandHorizontal) {
+  if (reliefAmt <= 0.002 || w <= 1 || h <= 1) return;
+  const pp = reliefProfileParams();
+  const crossLen = strandHorizontal ? h : w;
+  const crown = Math.min(0.30, 0.08 + reliefAmt * 0.24 * pp.crown);
+  const edge = Math.min(0.32, 0.05 + reliefAmt * 0.22 * pp.edge);
+  const reach = Math.max(1.5, crossLen * (0.14 + 0.18 * bendAmt));
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+
+  const gx0 = x + (lightVec.x < 0 ? w : 0);
+  const gy0 = y + (lightVec.y < 0 ? h : 0);
+  const gx1 = x + (lightVec.x < 0 ? 0 : w);
+  const gy1 = y + (lightVec.y < 0 ? 0 : h);
+  const shade = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+  shade.addColorStop(0, `rgba(255,250,238,${crown * 0.82})`);
+  shade.addColorStop(0.46, `rgba(255,255,255,${crown * 0.20})`);
+  shade.addColorStop(1, `rgba(0,0,0,${edge * 0.82})`);
+  ctx.globalCompositeOperation = 'soft-light';
+  ctx.fillStyle = shade;
+  ctx.fillRect(x, y, w, h);
+
+  let cross;
+  cross = strandHorizontal ? ctx.createLinearGradient(0, y, 0, y + h) : ctx.createLinearGradient(x, 0, x + w, 0);
+  if (currentProfile === 'round') {
+    cross.addColorStop(0, `rgba(0,0,0,${edge})`);
+    cross.addColorStop(0.18, `rgba(255,255,255,${crown * 0.24})`);
+    cross.addColorStop(0.50, `rgba(255,255,255,${crown * 0.72})`);
+    cross.addColorStop(0.82, `rgba(255,255,255,${crown * 0.16})`);
+    cross.addColorStop(1, `rgba(0,0,0,${edge * 0.92})`);
+  } else if (currentProfile === 'beveled') {
+    cross.addColorStop(0, `rgba(0,0,0,${edge})`);
+    cross.addColorStop(0.22, `rgba(255,255,255,${crown * 0.30})`);
+    cross.addColorStop(0.50, `rgba(255,255,255,${crown * 0.54})`);
+    cross.addColorStop(0.78, `rgba(255,255,255,${crown * 0.10})`);
+    cross.addColorStop(1, `rgba(0,0,0,${edge * 0.86})`);
+  } else if (currentProfile === 'ribbon') {
+    cross.addColorStop(0, `rgba(0,0,0,${edge * 0.55})`);
+    cross.addColorStop(0.25, `rgba(255,255,255,${crown * 0.14})`);
+    cross.addColorStop(0.50, `rgba(255,255,255,${crown * 0.34})`);
+    cross.addColorStop(0.75, `rgba(255,255,255,${crown * 0.08})`);
+    cross.addColorStop(1, `rgba(0,0,0,${edge * 0.62})`);
+  } else {
+    cross.addColorStop(0, `rgba(0,0,0,${edge * 0.35})`);
+    cross.addColorStop(0.50, `rgba(255,255,255,${crown * 0.14})`);
+    cross.addColorStop(1, `rgba(0,0,0,${edge * 0.38})`);
+  }
+  ctx.globalCompositeOperation = 'soft-light';
+  ctx.fillStyle = cross;
+  ctx.fillRect(x, y, w, h);
+
+  if (contactAmt > 0.002) {
+    const sg = strandHorizontal ? ctx.createLinearGradient(0, y + h - reach, 0, y + h) : ctx.createLinearGradient(x + w - reach, 0, x + w, 0);
+    sg.addColorStop(0, 'rgba(0,0,0,0)');
+    sg.addColorStop(1, `rgba(0,0,0,${Math.min(0.46, 0.10 + contactAmt * 0.38)})`);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = sg;
+    if (strandHorizontal) ctx.fillRect(x, y + h - reach, w, reach);
+    else ctx.fillRect(x + w - reach, y, reach, h);
+  }
+
+  if (specAmt > 0.002 && currentProfile !== 'flat') {
+    const sp = Math.min(0.18, specAmt * 0.16 * pp.crown);
+    const sg = strandHorizontal ? ctx.createLinearGradient(0, y + h * 0.24, 0, y + h * 0.56) : ctx.createLinearGradient(x + w * 0.24, 0, x + w * 0.56, 0);
+    sg.addColorStop(0, 'rgba(255,255,255,0)');
+    sg.addColorStop(0.55, `rgba(255,255,255,${sp})`);
+    sg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = sg;
+    ctx.fillRect(x, y, w, h);
+  }
+  ctx.restore();
+}
+
+function applySurfaceReliefPolygon(corners, useA, reliefAmt, contactAmt, specAmt, bendAmt, lightVec) {
+  if (reliefAmt <= 0.002 || !corners || corners.length < 4) return;
+  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+  const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs)-x, h = Math.max(...ys)-y;
+  const strandHorizontal = Math.abs(corners[1][0]-corners[0][0]) >= Math.abs(corners[1][1]-corners[0][1]);
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(corners[0][0],corners[0][1]);
+  for (let i=1;i<corners.length;i++) ctx.lineTo(corners[i][0],corners[i][1]);
+  ctx.closePath(); ctx.clip();
+  applySurfaceReliefRect(x,y,w,h,useA,reliefAmt,contactAmt,specAmt,bendAmt,lightVec,strandHorizontal);
+  ctx.restore();
+}
+
 function applyEdgeGlow(x, y, w, h, useA, depthAmt, shadowReach, tensionDepthMul, lightVec) {
   const profileMul = currentProfile === 'round' ? 1.0 : currentProfile === 'ribbon' ? 0.82 : currentProfile === 'beveled' ? 1.12 : 0.58;
   const peakBase = Math.max(0, Math.min(0.5, 0.27 * depthAmt * tensionDepthMul * profileMul * (useA ? 1.15 : 0.9)));
@@ -808,7 +935,7 @@ function paintDiagonalMaskedSource(source, maskCtx, layerCtx, w, h, scale, warpX
 // blackouts caused by large numbers of edge-clipped source rectangles.
 function renderDiagonalWeave(p) {
   const { sourceA, sourceB, mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec,
-    warpAmt, imperfAmt, density, tensionFactor, tensionDepthMul,
+    warpAmt, imperfAmt, density, tensionFactor, tensionDepthMul, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt,
     animationProgress, weaveProgress } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
   const cx = w / 2, cy = h / 2;
@@ -924,7 +1051,7 @@ function renderDiagonalWeave(p) {
 
   // Keep the existing physical-depth lighting language, but do it only once per
   // strand group after the two image composites, avoiding per-cell canvas work.
-  if (depthAmt > 0) {
+  if (depthAmt > 0 || reliefAmt > 0) {
     for (const g of edgeGroups) {
       ctx.save();
       ctx.beginPath();
@@ -932,7 +1059,8 @@ function renderDiagonalWeave(p) {
       for (let i=1;i<g.corners.length;i++) ctx.lineTo(g.corners[i][0],g.corners[i][1]);
       ctx.closePath();
       ctx.clip();
-      applyPolygonEdgeGlow(g.corners, g.useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
+      if (depthAmt > 0) applyPolygonEdgeGlow(g.corners, g.useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
+      applySurfaceReliefPolygon(g.corners, g.useA, reliefAmt, contactShadowAmt, specularAmt, surfaceBendAmt, lightVec);
       ctx.restore();
     }
   }
@@ -940,6 +1068,7 @@ function renderDiagonalWeave(p) {
 
 
 [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightDirectionSlider, grainSlider, lightIntensitySlider,
+ reliefSlider, contactShadowSlider, specularSlider, surfaceBendSlider,
  exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
   el.addEventListener('input', () => {
     // After the first weave animation, parameter changes are live edits.
@@ -967,6 +1096,10 @@ function renderDiagonalWeave(p) {
     lightDirectionVal.textContent = lightDirectionSlider.value + '°';
     grainVal.textContent = grainSlider.value + '%';
     lightIntensityVal.textContent = lightIntensitySlider.value + '%';
+    reliefVal.textContent = reliefSlider.value + '%';
+    contactShadowVal.textContent = contactShadowSlider.value + '%';
+    specularVal.textContent = specularSlider.value + '%';
+    surfaceBendVal.textContent = surfaceBendSlider.value + '%';
     exposureAVal.textContent = exposureASlider.value;
     brillianceAVal.textContent = brillianceASlider.value;
     exposureBVal.textContent = exposureBSlider.value;
@@ -983,6 +1116,7 @@ resetBtn.addEventListener('click', () => {
   meshSlider.value = 40; strandLengthSlider.value = 1; depthAmtSlider.value = 60; shadowReachSlider.value = 75; warpSlider.value = 0;
   lightDirectionSlider.value = 45; grainSlider.value = 0;
   imperfectionSlider.value = 15; densitySlider.value = 50; tensionSlider.value = 50;
+  reliefSlider.value = 72; contactShadowSlider.value = 68; specularSlider.value = 24; surfaceBendSlider.value = 18;
   backlightToggle.checked = false; lightIntensitySlider.value = 50;
   zoomWithMeshToggle.checked = false;
   exposureASlider.value = 0; brillianceASlider.value = 0;
@@ -993,6 +1127,7 @@ resetBtn.addEventListener('click', () => {
   currentProfile = 'round';
   profileBtns.forEach(b => b.classList.toggle('active', b.dataset.profile === 'round'));
   [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightDirectionSlider, grainSlider, lightIntensitySlider,
+   reliefSlider, contactShadowSlider, specularSlider, surfaceBendSlider,
    exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider]
     .forEach(el => el.dispatchEvent(new Event('input')));
   render();

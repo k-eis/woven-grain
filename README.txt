@@ -1,8 +1,12 @@
-Woven Grain Pro — mobile stable v2
+Woven Grain Pro — 3D Relief Update
 
-Fixes:
-- Restores/keeps PLAY WEAVE generation animation.
-- Keeps STRAND PROFILE: Round / Ribbon / Beveled / Flat.
-- Fixes animation rendering with mobile-safe filtered canvas sources (canvas width/height vs image naturalWidth/naturalHeight).
-- Keeps A/B Exposure and Brilliance mobile-safe processing.
-- On mobile, Photo A / Photo B windows are reduced so more slider controls are visible without scrolling as much.
+This update strengthens the woven-surface rendering while keeping the existing Canvas-2D/mobile architecture.
+
+Changes:
+- Adds usable STRAND PROFILE shading for Round / Ribbon / Beveled / Flat.
+- Wires RELIEF, CONTACT SHADOW, SPECULAR and SURFACE BEND controls into the renderer.
+- Adds a raised cross-section treatment with directional light/shadow gradients.
+- Adds stronger contact shadows at the over/under boundary.
+- Adds restrained surface highlights for a more physical material read.
+- Applies the same relief treatment to DIAGONAL mode.
+- Keeps the existing iPhone/mobile-safe diagonal rendering and A/B preview improvements.
