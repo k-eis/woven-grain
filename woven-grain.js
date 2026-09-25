@@ -757,21 +757,72 @@ function applyPolygonEdgeGlow(corners, useA, depthAmt, shadowReach, tensionDepth
 // boundary), this rotates the mesh grid itself by 45° so the bands genuinely cross
 // like real diagonal basketry — each "cell" is a diamond in screen space, clipped
 // and filled with the correctly-oriented (unrotated) photo content underneath.
+let diagonalMaskA = null;
+let diagonalMaskB = null;
+let diagonalLayer = null;
+
+function ensureDiagonalBuffers(w, h) {
+  function makeCanvas(old) {
+    const c = old || document.createElement('canvas');
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    return c;
+  }
+  diagonalMaskA = makeCanvas(diagonalMaskA);
+  diagonalMaskB = makeCanvas(diagonalMaskB);
+  diagonalLayer = makeCanvas(diagonalLayer);
+  return {
+    maskA: diagonalMaskA.getContext('2d'),
+    maskB: diagonalMaskB.getContext('2d'),
+    layer: diagonalLayer.getContext('2d')
+  };
+}
+
+// Draw an already output-sized source without ever supplying an out-of-range
+// source rectangle to drawImage().  This is deliberately used by DIAGONAL mode
+// because iOS/Safari can black out when thousands of clipped drawImage(sourceRect)
+// operations are issued near the canvas edges.
+function drawMappedDiagonalSource(targetCtx, source, w, h, scale, warpX, warpY) {
+  targetCtx.save();
+  targetCtx.translate(w / 2 - warpX, h / 2 - warpY);
+  targetCtx.scale(1 / Math.max(0.001, scale), 1 / Math.max(0.001, scale));
+  targetCtx.translate(-w / 2, -h / 2);
+  targetCtx.drawImage(source, 0, 0, w, h);
+  targetCtx.restore();
+}
+
+function paintDiagonalMaskedSource(source, maskCtx, layerCtx, w, h, scale, warpX, warpY) {
+  layerCtx.save();
+  layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+  layerCtx.clearRect(0, 0, w, h);
+  drawMappedDiagonalSource(layerCtx, source, w, h, scale, warpX, warpY);
+  layerCtx.globalCompositeOperation = 'destination-in';
+  layerCtx.drawImage(maskCtx.canvas, 0, 0, w, h);
+  layerCtx.restore();
+  ctx.drawImage(layerCtx.canvas, 0, 0, w, h);
+}
+
+// DIAGONAL WEAVE — robust mask/composite renderer.
+// Instead of drawing a cropped source image for every diamond, this builds two
+// lightweight polygon masks and composites each photo only once per pass. This
+// keeps the actual diagonal basket geometry while avoiding Safari/iPhone canvas
+// blackouts caused by large numbers of edge-clipped source rectangles.
 function renderDiagonalWeave(p) {
-  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec, warpAmt, imperfAmt, density, tensionFactor, tensionSizeAdjust, tensionDepthMul, filterA, filterB, animationProgress, weaveProgress } = p;
+  const { mesh, zoomFactor, strandLength, depthAmt, shadowReach, lightVec,
+    warpAmt, imperfAmt, density, tensionFactor, tensionDepthMul,
+    animationProgress, weaveProgress } = p;
   const w = outputCanvas.width, h = outputCanvas.height;
   const cx = w / 2, cy = h / 2;
-  const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2; // 45°
-
+  const cosA = Math.SQRT1_2, sinA = Math.SQRT1_2;
   const diag = Math.sqrt(w * w + h * h);
-  const range = Math.ceil(diag / 2 / mesh) + 2;
+  const range = Math.ceil(diag / 2 / Math.max(1, mesh)) + 2;
+  const { maskA, maskB, layer } = ensureDiagonalBuffers(w, h);
 
-  // precompute cover-fit mapping (source <- canvas) once per photo, reused for every diamond's bounding box.
-  // zoomFactor (tied to MESH SIZE) scales past the normal cover-fit baseline so a wider mesh reads as more zoomed-in.
-  function coverMap(img) {
-    return { source: img, scale: zoomFactor };
-  }
-  const mapA = coverMap(sourceA), mapB = coverMap(sourceB);
+  maskA.setTransform(1,0,0,1,0,0);
+  maskB.setTransform(1,0,0,1,0,0);
+  maskA.clearRect(0,0,w,h);
+  maskB.clearRect(0,0,w,h);
+  maskA.fillStyle = '#fff';
+  maskB.fillStyle = '#fff';
 
   function boundsOf(corners) {
     const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
@@ -782,142 +833,111 @@ function renderDiagonalWeave(p) {
     return { bx, by, bw: bxMax - bx, bh: byMax - by };
   }
 
-  // ── PASS 1 (UNDER layer): every diamond's crossing photo drawn first at its
-  // full, un-shrunk footprint — guarantees the strand that's "under" at a given
-  // crossing is always fully present, same rationale as the axis-aligned modes.
-  for (let row = -range; row <= range; row++) {
-    for (let col = -range; col <= range; col++) {
-      const u0 = row * mesh, v0 = col * mesh;
-      const gRow = Math.floor(row / strandLength);
-      const gCol = Math.floor(col / strandLength);
-      if (animationProgress != null && !shouldRevealCell(row + range, col + range, range * 2, range * 2, weaveProgress, 4)) continue;
-      let baseUseA = (gRow + gCol) % 2 === 0;
-      let useA = baseUseA;
-      if (density > 50 && !baseUseA) { if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true; }
-      else if (density < 50 && baseUseA) { if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false; }
+  function cellInfo(row, col) {
+    const u0 = row * mesh, v0 = col * mesh;
+    const gRow = Math.floor(row / strandLength);
+    const gCol = Math.floor(col / strandLength);
+    let baseUseA = (gRow + gCol) % 2 === 0;
+    let useA = baseUseA;
+    if (density > 50 && !baseUseA) {
+      if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true;
+    } else if (density < 50 && baseUseA) {
+      if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false;
+    }
+    const cornersUV = [[u0,v0],[u0+mesh,v0],[u0+mesh,v0+mesh],[u0,v0+mesh]];
+    const cornersXYBase = cornersUV.map(([u,v], i) => {
+      const jx = (seededRandom(row,col,10+i)-0.5) * 2 * imperfAmt;
+      const jy = (seededRandom(row,col,20+i)-0.5) * 2 * imperfAmt;
+      return [u*cosA - v*sinA + cx + jx, u*sinA + v*cosA + cy + jy];
+    });
+    const centroid = cornersXYBase.reduce((a,c)=>[a[0]+c[0]/4,a[1]+c[1]/4],[0,0]);
+    return { row, col, gRow, gCol, useA, cornersXYBase, centroid };
+  }
 
-      const cornersUV = [[u0, v0], [u0 + mesh, v0], [u0 + mesh, v0 + mesh], [u0, v0 + mesh]];
-      const cornersXYBase = cornersUV.map(([u, v], i) => {
-        const jx = (seededRandom(row, col, 10 + i) - 0.5) * 2 * imperfAmt;
-        const jy = (seededRandom(row, col, 20 + i) - 0.5) * 2 * imperfAmt;
-        return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
-      });
-      const centroid = cornersXYBase.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
-      const baseB = boundsOf(cornersXYBase);
-      if (baseB.bw <= 0 || baseB.bh <= 0) continue;
+  function reveal(row, col, passSeed) {
+    if (animationProgress == null) return true;
+    return shouldRevealCell(row + range, col + range, range * 2, range * 2, weaveProgress, passSeed);
+  }
 
-      const centerWarpX = warpAmt * Math.sin(centroid[1] * 0.05 + col);
-      const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
-      const underMap = useA ? mapB : mapA;
-      const ubg = {
-        sx: (baseB.bx + centerWarpX - w / 2) * underMap.scale + w / 2,
-        sy: (baseB.by + centerWarpY - h / 2) * underMap.scale + h / 2,
-        sw: baseB.bw * underMap.scale, sh: baseB.bh * underMap.scale
-      };
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(cornersXYBase[0][0], cornersXYBase[0][1]);
-      for (let i = 1; i < cornersXYBase.length; i++) ctx.lineTo(cornersXYBase[i][0], cornersXYBase[i][1]);
-      ctx.closePath();
-      ctx.clip();
-      drawClampedSource(underMap.source, ubg.sx, ubg.sy, ubg.sw, ubg.sh, baseB.bx, baseB.by, baseB.bw, baseB.bh);
-      ctx.restore();
+  function fillPolygon(maskCtx, corners) {
+    const b = boundsOf(corners);
+    if (b.bw <= 0 || b.bh <= 0) return false;
+    maskCtx.beginPath();
+    maskCtx.moveTo(corners[0][0], corners[0][1]);
+    for (let i=1;i<corners.length;i++) maskCtx.lineTo(corners[i][0], corners[i][1]);
+    maskCtx.closePath();
+    maskCtx.fill();
+    return true;
+  }
+
+  // PASS 1: under strands. The masks are disjoint by photo, so each source is
+  // composited only once after all of the geometry has been accumulated.
+  for (let row=-range; row<=range; row++) {
+    for (let col=-range; col<=range; col++) {
+      if (!reveal(row,col,4)) continue;
+      const c = cellInfo(row,col);
+      const target = c.useA ? maskB : maskA;
+      fillPolygon(target, c.cornersXYBase);
     }
   }
 
-  // ── PASS 2 (OVER layer): the crossing-winning photo, its diamond scaled up
-  // from a constant baseline (a real fold-over edge even at neutral tension) —
-  // TIGHT grows the overlap further, LOOSE shrinks it back toward (never past)
-  // the base diamond, always revealing the always-present under layer beneath.
-  for (let row = -range; row <= range; row++) {
-    for (let col = -range; col <= range; col++) {
-      const u0 = row * mesh, v0 = col * mesh;
-      // STRAND LENGTH groups neighboring diamonds into the same continuous segment,
-      // same rationale as basket/stripe below
-      const gRow = Math.floor(row / strandLength);
-      const gCol = Math.floor(col / strandLength);
-      if (animationProgress != null && !shouldRevealCell(row + range, col + range, range * 2, range * 2, weaveProgress, 5)) continue;
-      let baseUseA = (gRow + gCol) % 2 === 0;
-      let useA = baseUseA;
-      if (density > 50 && !baseUseA) {
-        if (seededRandom(gRow, gCol, 5) < (density - 50) / 50) useA = true;
-      } else if (density < 50 && baseUseA) {
-        if (seededRandom(gRow, gCol, 5) < (50 - density) / 50) useA = false;
-      }
+  // PASS 1 compositing. Default scale=1 is an exact screen-space mapping.
+  paintDiagonalMaskedSource(sourceA, maskA, layer, w, h, zoomFactor, 0, 0);
+  paintDiagonalMaskedSource(sourceB, maskB, layer, w, h, zoomFactor, 0, 0);
 
-      // diamond corners: rotated-grid square -> screen space, with IMPERFECTION
-      // jittering each corner individually (uneven hand-woven edges) and TENSION
-      // scaling the whole diamond from its centroid (tight = overlapping/sealed, loose = gaps)
-      const cornersUV = [[u0, v0], [u0 + mesh, v0], [u0 + mesh, v0 + mesh], [u0, v0 + mesh]];
-      const cornersXYBase = cornersUV.map(([u, v], i) => {
-        const jx = (seededRandom(row, col, 10 + i) - 0.5) * 2 * imperfAmt;
-        const jy = (seededRandom(row, col, 20 + i) - 0.5) * 2 * imperfAmt;
-        return [u * cosA - v * sinA + cx + jx, u * sinA + v * cosA + cy + jy];
-      });
-      const centroid = cornersXYBase.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
-      const tensionScale = 1.16 + tensionFactor * 0.22; // 1.16 baseline overlap at neutral tension
-      const cornersXY = cornersXYBase.map(([x, y]) => [
-        centroid[0] + (x - centroid[0]) * tensionScale,
-        centroid[1] + (y - centroid[1]) * tensionScale
+  // Clear masks for PASS 2.
+  maskA.clearRect(0,0,w,h);
+  maskB.clearRect(0,0,w,h);
+  const tensionScale = 1.16 + tensionFactor * 0.22;
+  const edgeGroups = [];
+
+  // PASS 2: over strands. Enlarging each diamond creates the visible fold-over
+  // at crossings. The resulting masks naturally occlude the under layer.
+  for (let row=-range; row<=range; row++) {
+    for (let col=-range; col<=range; col++) {
+      if (!reveal(row,col,5)) continue;
+      const c = cellInfo(row,col);
+      const cornersXY = c.cornersXYBase.map(([x,y]) => [
+        c.centroid[0] + (x-c.centroid[0])*tensionScale,
+        c.centroid[1] + (y-c.centroid[1])*tensionScale
       ]);
+      const target = c.useA ? maskA : maskB;
+      if (!fillPolygon(target, cornersXY)) continue;
 
-      const baseB = boundsOf(cornersXYBase);
-      if (baseB.bw <= 0 || baseB.bh <= 0) continue; // diamond entirely off-canvas, skip
-
-      const centerWarpX = warpAmt * Math.sin(centroid[1] * 0.05 + col);
-      const centerWarpY = warpAmt * Math.sin(centroid[0] * 0.05 + row);
-
-      function sampleFor(map, bx, by, bw, bh) {
-        return {
-          sx: (bx + centerWarpX - w / 2) * map.scale + w / 2,
-          sy: (by + centerWarpY - h / 2) * map.scale + h / 2,
-          sw: bw * map.scale, sh: bh * map.scale
-        };
-      }
-
-      const fgBounds = boundsOf(cornersXY);
-      const { bx, by, bw, bh } = fgBounds;
-      if (bw <= 0 || bh <= 0) continue;
-
-      const map = useA ? mapA : mapB;
-      const fg = sampleFor(map, bx, by, bw, bh);
-      const sx = fg.sx, sy = fg.sy, sw = fg.sw, sh = fg.sh;
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(cornersXY[0][0], cornersXY[0][1]);
-      for (let i = 1; i < cornersXY.length; i++) ctx.lineTo(cornersXY[i][0], cornersXY[i][1]);
-      ctx.closePath();
-      ctx.clip();
-      drawClampedSource(map.source, sx, sy, sw, sh, bx, by, bw, bh);
-      ctx.restore();
-
-      // group-level shadow: drawn once per group (from its anchor diamond), clipped
-      // to the BIG group diamond's own path (not the small per-cell one) so the glow
-      // hugs the group's true outer edge instead of stacking a blob on every sub-cell
-      const isGroupAnchor = row % strandLength === 0 && col % strandLength === 0;
-      if (depthAmt > 0 && isGroupAnchor) {
+      if (depthAmt > 0 && row % strandLength === 0 && col % strandLength === 0) {
         const gu0 = row * mesh, gv0 = col * mesh;
         const gSize = strandLength * mesh;
-        const groupCornersUV = [[gu0, gv0], [gu0 + gSize, gv0], [gu0 + gSize, gv0 + gSize], [gu0, gv0 + gSize]];
-        let groupCorners = groupCornersUV.map(([u, v]) => [u * cosA - v * sinA + cx, u * sinA + v * cosA + cy]);
-        const gCentroid = groupCorners.reduce((a, c) => [a[0] + c[0] / 4, a[1] + c[1] / 4], [0, 0]);
-        groupCorners = groupCorners.map(([x, y]) => [
-          gCentroid[0] + (x - gCentroid[0]) * tensionScale,
-          gCentroid[1] + (y - gCentroid[1]) * tensionScale
+        const groupCornersUV = [[gu0,gv0],[gu0+gSize,gv0],[gu0+gSize,gv0+gSize],[gu0,gv0+gSize]];
+        let groupCorners = groupCornersUV.map(([u,v]) => [u*cosA-v*sinA+cx,u*sinA+v*cosA+cy]);
+        const gCentroid = groupCorners.reduce((a,cc)=>[a[0]+cc[0]/4,a[1]+cc[1]/4],[0,0]);
+        groupCorners = groupCorners.map(([x,y])=>[
+          gCentroid[0] + (x-gCentroid[0])*tensionScale,
+          gCentroid[1] + (y-gCentroid[1])*tensionScale
         ]);
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(groupCorners[0][0], groupCorners[0][1]);
-        for (let i = 1; i < groupCorners.length; i++) ctx.lineTo(groupCorners[i][0], groupCorners[i][1]);
-        ctx.closePath();
-        ctx.clip();
-        applyPolygonEdgeGlow(groupCorners, useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
-        ctx.restore();
+        edgeGroups.push({ corners: groupCorners, useA: c.useA });
       }
+    }
+  }
+
+  paintDiagonalMaskedSource(sourceA, maskA, layer, w, h, zoomFactor, 0, 0);
+  paintDiagonalMaskedSource(sourceB, maskB, layer, w, h, zoomFactor, 0, 0);
+
+  // Keep the existing physical-depth lighting language, but do it only once per
+  // strand group after the two image composites, avoiding per-cell canvas work.
+  if (depthAmt > 0) {
+    for (const g of edgeGroups) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(g.corners[0][0],g.corners[0][1]);
+      for (let i=1;i<g.corners.length;i++) ctx.lineTo(g.corners[i][0],g.corners[i][1]);
+      ctx.closePath();
+      ctx.clip();
+      applyPolygonEdgeGlow(g.corners, g.useA, depthAmt, shadowReach, tensionDepthMul, lightVec);
+      ctx.restore();
     }
   }
 }
+
 
 [meshSlider, strandLengthSlider, warpSlider, imperfectionSlider, densitySlider, tensionSlider, depthAmtSlider, shadowReachSlider, lightDirectionSlider, grainSlider, lightIntensitySlider,
  exposureASlider, brillianceASlider, exposureBSlider, brillianceBSlider].forEach(el => {
