@@ -161,6 +161,10 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 #saveOverlay p { font-size: 13px; color: var(--ink); margin: 4px 0; }
 #saveOverlay .closeBtn { margin-top: 20px; font-size: 12px; color: var(--muted); border: 1px solid var(--line-strong); padding: 8px 16px; display: inline-block; cursor: pointer; }
 
+.footer-links { display: flex; gap: 8px; margin-top: 16px; }
+.footer-links a { flex: 1; padding: 11px 14px; border: 1px solid var(--line-strong); background: transparent; color: var(--ink); font: 500 10px/1 var(--sans); letter-spacing: 0.03em; text-align: center; text-decoration: none; cursor: pointer; transition: all 0.12s; }
+.footer-links a:hover { border-color: var(--accent); color: var(--accent); }
+
 @media (max-width: 860px) {
   .wrap { padding: 20px 16px 50px; }
   header { flex-direction: column; align-items: flex-start; gap: 10px; padding-bottom: 16px; margin-bottom: 20px; }
@@ -178,6 +182,8 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
   input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; }
   .btn { padding: 16px; font-size: 12px; }
   .select-btn { padding: 12px 6px; font-size: 11px; }
+  .footer-links { flex-direction: column; gap: 8px; }
+  .footer-links a { padding: 14px; font-size: 11px; }
 }
 .profile-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:7px}
 .profile-btn{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.025);color:var(--muted);border-radius:6px;padding:7px 4px 6px;cursor:pointer;font:inherit;min-width:0;transition:.15s ease}
@@ -436,14 +442,13 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
         </div>
       </div>
 
-      <div class="ctrl-group" style="border-bottom:none;">
-        <div style="display:flex; flex-direction:column; gap:12px;">
-          <a href="https://keis01.substack.com/p/k-eis-design-filter-000?r=87bvw8&utm_medium=ios" style="display:block; text-align:center; padding:16px; border:1px solid var(--line-strong); font:600 12px/1 var(--sans); letter-spacing:0.06em; color:var(--ink); text-decoration:none;">PHILOSOPHY &bull; USAGE &bull; LICENSE</a>
-          <a href="https://keis01.substack.com/s/k-eis-design-filter" style="display:block; text-align:center; padding:16px; border:1px solid var(--line-strong); font:600 12px/1 var(--sans); letter-spacing:0.06em; color:var(--ink); text-decoration:none;">ALL FILTERS</a>
-          <a href="https://note.com/noted_k_eis03/m/m458f00a3d892" style="display:block; text-align:center; padding:16px; border:1px solid var(--line-strong); font:600 12px/1 var(--sans); letter-spacing:0.06em; color:var(--ink); text-decoration:none;">OUTSIDE SERIES</a>
-        </div>
-      </div>
     </div>
+  </div>
+
+  <div class="footer-links">
+    <a href="https://keis01.substack.com/p/k-eis-design-filter-000?r=87bvw8&utm_medium=ios" target="_blank" rel="noopener">PHILOSOPHY &bull; USAGE &bull; LICENSE</a>
+    <a href="https://keis01.substack.com/s/k-eis-design-filter" target="_blank" rel="noopener">ALL FILTERS</a>
+    <a href="https://note.com/noted_k_eis03/m/m458f00a3d892" target="_blank" rel="noopener">OUTSIDE SERIES</a>
   </div>
 </div>
 
